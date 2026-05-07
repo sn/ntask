@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pathspec
+from pathspec.pattern import Pattern
 
 from .hash import FileHash, hash_many, hash_many_files
 
@@ -14,7 +15,7 @@ class InputManifest:
     digest: str
 
 
-def _load_gitignore(root: Path) -> pathspec.PathSpec | None:
+def _load_gitignore(root: Path) -> pathspec.PathSpec[Pattern] | None:
     gi = root / ".gitignore"
     if not gi.is_file():
         return None
