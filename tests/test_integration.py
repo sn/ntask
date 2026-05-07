@@ -8,6 +8,7 @@ def _run_ntask(args, cwd):
     return subprocess.run(  # noqa: S603
         [sys.executable, "-m", "ntask", *args],
         cwd=cwd, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
         env={**os.environ},
     )
 

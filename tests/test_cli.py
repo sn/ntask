@@ -18,6 +18,8 @@ def _run_ntask(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
         cwd=cwd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env={**os.environ},
     )
 
@@ -300,8 +302,11 @@ def test_cli_watch_initial_run_and_exit_on_sigint(tmp_path: Path):
 
     proc.send_signal(interrupt_signal)
     proc.wait(timeout=10)
-    # Exit 0 on clean watch exit; some platforms may report 130 for SIGINT.
-    assert proc.returncode in (0, 130), f"unexpected exit {proc.returncode}"
+    # Exit 0 on clean watch exit; POSIX may report 130 for SIGINT;
+    # Windows reports 0xC000013A (STATUS_CONTROL_C_EXIT) when the runtime
+    # propagates SIGBREAK out of the process without a clean handler.
+    assert proc.returncode in (0, 130, 0xC000013A), \
+        f"unexpected exit {proc.returncode}"
 
 
 def test_cli_offline_flag_skips_remote(tmp_path: Path):

@@ -69,5 +69,7 @@ def test_watch_reruns_on_file_edit_end_to_end(tmp_path: Path):
             proc.kill()
             proc.wait()
 
-    # Clean exit on SIGINT.
-    assert proc.returncode in (0, 130), f"unexpected exit {proc.returncode}"
+    # Clean exit on SIGINT. Windows reports 0xC000013A (STATUS_CONTROL_C_EXIT)
+    # when the runtime propagates SIGBREAK out of the process.
+    assert proc.returncode in (0, 130, 0xC000013A), \
+        f"unexpected exit {proc.returncode}"
