@@ -271,10 +271,22 @@ def test_cli_watch_initial_run_and_exit_on_sigint(tmp_path: Path):
     ))
     (tmp_path / "x.py").write_text("v1")
 
+    # Windows can't deliver SIGINT to a child via Popen.send_signal; the
+    # cross-platform recipe is to spawn the child in its own process group
+    # and send CTRL_BREAK_EVENT, which Python's default handler converts to
+    # KeyboardInterrupt the same way SIGINT does on POSIX.
+    if sys.platform == "win32":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        interrupt_signal = signal.CTRL_BREAK_EVENT
+    else:
+        creationflags = 0
+        interrupt_signal = signal.SIGINT
+
     proc = subprocess.Popen(
         [sys.executable, "-m", "ntask", "watch", "build"],
         cwd=tmp_path,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        creationflags=creationflags,
     )
 
     # Wait up to 3s for the initial run to complete.
@@ -286,7 +298,7 @@ def test_cli_watch_initial_run_and_exit_on_sigint(tmp_path: Path):
         time.sleep(0.05)
     assert sentinel.exists(), "initial run did not produce sentinel.txt"
 
-    proc.send_signal(signal.SIGINT)
+    proc.send_signal(interrupt_signal)
     proc.wait(timeout=10)
     # Exit 0 on clean watch exit; some platforms may report 130 for SIGINT.
     assert proc.returncode in (0, 130), f"unexpected exit {proc.returncode}"
@@ -373,10 +385,12 @@ def test_cli_remote_config_via_pyproject_shares_cache(tmp_path: Path):
             "def build():\n"
             "    Path('ran-marker.txt').write_text('executed')\n"
         )
+        # TOML literal string ('...') so Windows backslashes in the path
+        # aren't interpreted as escape sequences.
         (project / "pyproject.toml").write_text(
-            f"[tool.ntask.remote_cache]\n"
-            f"type = \"local-fs\"\n"
-            f"path = \"{shared_remote}\"\n"
+            "[tool.ntask.remote_cache]\n"
+            "type = \"local-fs\"\n"
+            f"path = '{shared_remote}'\n"
         )
         return project
 

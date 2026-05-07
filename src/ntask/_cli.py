@@ -152,7 +152,25 @@ def _empty_breakdown_for_why() -> CacheBreakdown:
     )
 
 
+def _ensure_utf8_stdio() -> None:
+    """Reconfigure stdout/stderr to UTF-8 when the runtime picked a codec
+    (e.g. Windows cp1252) that can't render the Unicode characters used in
+    table borders, graph arrows, and TUI glyphs."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = getattr(stream, "encoding", None) or ""
+        if enc.lower() in ("utf-8", "utf8"):
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_stdio()
     parser = _build_global_parser()
     ns, _ = parser.parse_known_args(argv)
 
@@ -426,5 +444,32 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return 130
         except BaseException as e:
-            print(f"error: {e}", file=sys.stderr)
-            return 1
+            return _report_unhandled(e)
+
+
+def _flatten_exceptions(exc: BaseException) -> list[BaseException]:
+    """Unwrap a (Base)ExceptionGroup into its leaf exceptions."""
+    if isinstance(exc, BaseExceptionGroup):
+        leaves: list[BaseException] = []
+        for sub in exc.exceptions:
+            leaves.extend(_flatten_exceptions(sub))
+        return leaves
+    return [exc]
+
+
+def _report_unhandled(exc: BaseException) -> int:
+    """Print an actionable message and pick a return code, even when the
+    failure arrives wrapped in an ExceptionGroup from anyio's task group."""
+    leaves = _flatten_exceptions(exc)
+    rc = 1
+    for leaf in leaves:
+        if isinstance(leaf, CycleError):
+            rc = max(rc, 2)
+            print(f"error: {leaf}", file=sys.stderr)
+        elif isinstance(leaf, KeyboardInterrupt):
+            rc = max(rc, 130)
+        elif isinstance(leaf, NtaskError):
+            print(f"error: {leaf}", file=sys.stderr)
+        else:
+            print(f"error: {type(leaf).__name__}: {leaf}", file=sys.stderr)
+    return rc

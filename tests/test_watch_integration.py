@@ -24,12 +24,20 @@ def test_watch_reruns_on_file_edit_end_to_end(tmp_path: Path):
     (tmp_path / "tasks.py").write_text(tasks_py)
     (tmp_path / "x.py").write_text("v1")
 
+    if sys.platform == "win32":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        interrupt_signal = signal.CTRL_BREAK_EVENT
+    else:
+        creationflags = 0
+        interrupt_signal = signal.SIGINT
+
     proc = subprocess.Popen(
         [sys.executable, "-m", "ntask", "watch", "build"],
         cwd=tmp_path,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env={**os.environ},
+        creationflags=creationflags,
     )
     counter = tmp_path / "counter.txt"
 
@@ -54,7 +62,7 @@ def test_watch_reruns_on_file_edit_end_to_end(tmp_path: Path):
         assert counter.read_text() == "2", \
             f"rerun did not increment counter; got {counter.read_text()!r}"
     finally:
-        proc.send_signal(signal.SIGINT)
+        proc.send_signal(interrupt_signal)
         try:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
