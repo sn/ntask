@@ -1,5 +1,10 @@
 # ntask
 
+[![PyPI](https://img.shields.io/pypi/v/ntask?color=green)](https://pypi.org/project/ntask/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ntask)](https://pypi.org/project/ntask/)
+[![PyPI - License](https://img.shields.io/pypi/l/ntask)](https://pypi.org/project/ntask/)
+[![Build](https://img.shields.io/github/actions/workflow/status/sn/ntask/test.yml?branch=main)](https://github.com/sn/ntask/actions?query=branch%3Amain)
+
 A Python-native task runner with content-hash caching and DAG execution.
 
 ```bash
@@ -12,22 +17,10 @@ Your Makefile runs everything every time. Your Justfile has no dependency graph.
 
 ## Quickstart
 
-Create a `tasks.py`:
+A complete release pipeline in 20 lines. Drop this into `tasks.py` at your project root:
 
 ```python
-from ntask import task, cached, depends, shell
-
-@task
-def install():
-    shell("pip install -e .")
-
-@task
-@cached(inputs=["src/**/*.py", "tests/**/*.py"])
-def test(pattern: str = "", verbose: bool = False):
-    """Run the test suite."""
-    flags = "-v" if verbose else ""
-    k = f"-k {pattern}" if pattern else ""
-    shell(f"pytest {flags} {k}")
+from ntask import task, cached, shell
 
 @task
 @cached(inputs=["src/**/*.py"])
@@ -35,24 +28,65 @@ def lint():
     shell("ruff check src/")
 
 @task
-def check():
-    """All quality checks."""
-    depends(lint, test)
+@cached(inputs=["src/**/*.py"])
+def typecheck():
+    shell("mypy src/")
+
+@task
+@cached(inputs=["src/**/*.py", "tests/**/*.py"])
+def test(pattern: str = ""):
+    shell(f"pytest -q {'-k ' + pattern if pattern else ''}")
+
+@task
+@cached(inputs=["src/**/*.py", "pyproject.toml"], outputs=["dist/"])
+def build():
+    shell("python -m build")
+
+@task(deps=[lint, typecheck, test, build])
+def release(version: str):
+    """Run checks, build, tag, and publish to PyPI."""
+    shell(f"git tag v{version} && git push --tags && twine upload dist/*")
 ```
 
-Run:
+The first time you cut a release, every step runs:
+
+```
+$ ntask release --version=1.0.0 -j
+running lint
+running typecheck
+running test
++ lint       (1.4s)
++ typecheck  (3.2s)
++ test       (4.9s)
+running build
++ build      (2.3s)
+running release
++ release    (0.9s)
+```
+
+The second time, ntask hashes the inputs, sees nothing changed, and skips every cached task. The whole `dist/` directory is restored from the content-addressed store without re-running `build`:
+
+```
+$ ntask release --version=1.0.1 -j
+o lint       cached (3a8f9c2d)
+o typecheck  cached (b7c5f1e9)
+o test       cached (9f2e8b14)
+o build      cached (4dab8273)   <- dist/ restored, build did not run
+running release
++ release    (0.9s)
+```
+
+Edit one file in `src/` and only the tasks whose inputs match that file rerun. `release` isn't cached so it always runs, but everything downstream of an unchanged input stays a hit. That's transitive content-hash caching in five decorators.
+
+Other things you'll reach for:
 
 ```bash
-ntask --list                       # show every registered task
-ntask test --pattern=auth --verbose
-ntask check                        # lint + test in order; both cache
-ntask check -j                     # all CPU cores; bare -j picks the count
+ntask --list                       # show every registered task with docstring
+ntask test --pattern=auth          # type hints become CLI flags automatically
+ntask --why test                   # explain the last cache decision item-by-item
+ntask --graph release              # ASCII DAG (mermaid / dot also available)
 ntask watch test                   # rerun on every src/ or tests/ change
-ntask --why test                   # explain why the last cache lookup missed
-ntask --graph check                # ASCII DAG (mermaid / dot also available)
 ```
-
-The second time you run `ntask check`, both `lint` and `test` are content-hash cache hits and finish in milliseconds. Change one file in `src/` and only the affected tasks rerun, transitively.
 
 ## Team cache
 
@@ -88,7 +122,7 @@ Run `ntask check` from an interactive terminal and a Textual TUI shows a live tr
 
 Six runnable, self-contained examples under [`examples/`](examples/):
 
-| #                                            | Demonstrates                                   |
+| File                                            | Demonstrates                                   |
 |----------------------------------------------|------------------------------------------------|
 | [01-hello](examples/01-hello/)               | Smallest possible cached task                  |
 | [02-python-lib](examples/02-python-lib/)     | install / lint / typecheck / test / build      |
@@ -122,7 +156,6 @@ Cache miss messages name the specific file or env change that caused the invalid
 - [Caching: the full contract](docs/caching.md)
 - [Migrating from Make / just / Invoke / Poe](docs/migration.md)
 - [Short API reference](docs/reference.md)
-- [Roadmap](docs/roadmap.md)
 
 Requirements: Python 3.11 or newer. BSD-3-Clause.
 
