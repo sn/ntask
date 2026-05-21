@@ -39,7 +39,11 @@ class _DAGApp(App[None]):
     #dag-tree { margin: 1 2; }
     #footer { dock: bottom; height: 1; padding: 0 2; color: $text-muted; }
     """
-    BINDINGS: ClassVar[list[BindingType]] = [("ctrl+c", "quit", "Quit")]
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("ctrl+c", "quit", "Quit"),
+        ("q", "quit", "Quit"),
+        ("escape", "quit", "Quit"),
+    ]
     TITLE = "ntask"
 
     def __init__(self, logs_dir: Path | None = None) -> None:
@@ -142,9 +146,18 @@ class TUIRenderer:
         self._app.call_from_thread(self._app.build_tree, graph)
 
     def stop(self) -> None:
-        """Signal the app to exit. The CLI owns thread-join and summary print."""
+        """No-op: the TUI persists until the user dismisses it via q/esc/ctrl+c.
+
+        The CLI is responsible for joining the executor thread and re-raising
+        any held exception after ``app.run()`` returns.
+        """
+        return
+
+    def announce_error(self, message: str) -> None:
+        """Show an error message in the footer with the dismiss hint."""
+        text = f"error: {message}  ·  press q/esc to quit"
         if self._app.is_running:
-            self._app.call_from_thread(self._app.exit)
+            self._app.call_from_thread(self._app.update_summary, text)
 
     @property
     def final_summary(self) -> str | None:
@@ -187,5 +200,6 @@ class TUIRenderer:
             f"  ·  logs: {self._logs_dir}"
         )
         self._final_summary = text
+        footer = f"{text}  ·  press q/esc to quit"
         if self._app.is_running:
-            self._app.call_from_thread(self._app.update_summary, text)
+            self._app.call_from_thread(self._app.update_summary, footer)
