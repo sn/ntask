@@ -88,6 +88,30 @@ ntask --graph release              # ASCII DAG (mermaid / dot also available)
 ntask watch test                   # rerun on every src/ or tests/ change
 ```
 
+### Mermaid graph for docs
+
+`--graph-format mermaid` emits a Mermaid block you can paste directly
+into a README or design doc. The example below is `ntask`'s own DAG,
+captured straight from `ntask --graph --graph-format mermaid`:
+
+```mermaid
+graph TD
+    install
+    lint
+    typecheck
+    test
+    check
+    build
+    release
+    lint --> check
+    typecheck --> check
+    test --> check
+    check --> release
+    build --> release
+```
+
+`--graph-format dot` produces Graphviz output for the same data.
+
 ## Team cache
 
 Share cache hits across machines via S3 (or GCS, HTTP, NFS):

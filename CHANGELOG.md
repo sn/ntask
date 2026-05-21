@@ -8,6 +8,10 @@ this project uses semantic versioning.
 ## [Unreleased]
 
 ### Documentation
+- README now includes a worked `--graph --graph-format mermaid` example
+  embedded as a real Mermaid block (the project's own DAG) so users can
+  see what to paste into their own design docs. See `ISSUES.md` for the
+  target-scoping bug found while verifying this.
 - New README section "When NOT to use `@cached`" documenting the categories
   of task — side effects, mutating shared state, time- or randomness-
   dependent, world-probing — where caching is the wrong default.
