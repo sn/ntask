@@ -8,6 +8,10 @@ this project uses semantic versioning.
 ## [Unreleased]
 
 ### Documentation
+- `docs/design/pre-post-hooks.md` captures the deferred design for
+  per-task before/after hooks: why composition (`@with_reset`) is the
+  recommended pattern today, and the constraints we'd commit to if we
+  ever do build module-level hooks.
 - README now includes a worked `--graph --graph-format mermaid` example
   embedded as a real Mermaid block (the project's own DAG) so users can
   see what to paste into their own design docs. See `ISSUES.md` for the
