@@ -194,3 +194,65 @@ def test_tui_renderer_summary_stored_for_caller(tmp_path: Path):
     assert r.final_summary is not None
     assert "2 ran" in r.final_summary
     assert "1 cached" in r.final_summary
+
+
+def test_tui_renderer_summary_shows_quit_hint_in_footer(tmp_path: Path):
+    """The footer is sticky on completion — user must press q/esc to dismiss."""
+    from ntask._render.tui import TUIRenderer, _DAGApp
+    app = _DAGApp(logs_dir=tmp_path)
+    r = TUIRenderer(app=app)
+    t = _spawn_app(app)
+    try:
+        g = Graph(nodes=["build"], edges=[])
+        r.start(graph=g, logs_dir=tmp_path)
+        r.summary(ran=1, cached=0, failed=0, skipped=0)
+        import time
+        time.sleep(0.2)
+        footer = app.query_one("#footer")
+        assert "press q/esc to quit" in str(footer.content)
+    finally:
+        _teardown_app(app, t)
+
+
+def test_tui_renderer_stop_is_noop(tmp_path: Path):
+    """stop() must not close the app — the CLI relies on the user dismissing."""
+    from ntask._render.tui import TUIRenderer, _DAGApp
+    app = _DAGApp(logs_dir=tmp_path)
+    r = TUIRenderer(app=app)
+    t = _spawn_app(app)
+    try:
+        r.stop()
+        import time
+        time.sleep(0.2)
+        assert app.is_running, "stop() must not exit the app"
+    finally:
+        _teardown_app(app, t)
+
+
+def test_tui_renderer_announce_error_updates_footer(tmp_path: Path):
+    from ntask._render.tui import TUIRenderer, _DAGApp
+    app = _DAGApp(logs_dir=tmp_path)
+    r = TUIRenderer(app=app)
+    t = _spawn_app(app)
+    try:
+        g = Graph(nodes=["build"], edges=[])
+        r.start(graph=g, logs_dir=tmp_path)
+        r.announce_error("RuntimeError: boom")
+        import time
+        time.sleep(0.2)
+        footer = app.query_one("#footer")
+        text = str(footer.content)
+        assert "RuntimeError: boom" in text
+        assert "press q/esc to quit" in text
+    finally:
+        _teardown_app(app, t)
+
+
+def test_tui_app_quit_bindings_include_q_and_escape():
+    """q and escape must trigger the quit action so users can dismiss the TUI."""
+    from ntask._render.tui import _DAGApp
+    # BINDINGS entries are (key, action, description) tuples.
+    keys = {b[0] for b in _DAGApp.BINDINGS}
+    assert "q" in keys
+    assert "escape" in keys
+    assert "ctrl+c" in keys

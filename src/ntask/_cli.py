@@ -406,17 +406,20 @@ def main(argv: list[str] | None = None) -> int:
 
         def _run_executor() -> None:
             try:
-                anyio.run(executor.run, [target], {target: kwargs})
+                result = anyio.run(executor.run, [target], {target: kwargs})
+                renderer.summary(
+                    ran=len(result.ran), cached=len(result.cached),
+                    failed=len(result.failed), skipped=len(result.skipped),
+                )
             except BaseException as exc:
                 exc_holder[0] = exc
-            finally:
-                # Always exit the app so main thread's app.run() unblocks.
-                if tui_app.is_running:
-                    tui_app.call_from_thread(tui_app.exit)
+                renderer.announce_error(f"{type(exc).__name__}: {exc}")
 
+        # The TUI stays mounted after the executor finishes so the user can
+        # actually read the final DAG state and summary; q/esc/ctrl+c dismiss.
         bg_thread = threading.Thread(target=_run_executor, daemon=False)
         bg_thread.start()
-        tui_app.run()     # blocks on main thread until app.exit()
+        tui_app.run()     # blocks until the user dismisses the TUI
         bg_thread.join()
         if renderer.final_summary:
             print(renderer.final_summary)
