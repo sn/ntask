@@ -107,6 +107,25 @@ ntask check --offline              # skip the remote for fast dev loops
 
 S3-compatibles (MinIO, R2, B2) take an `endpoint_url`. GCS and HTTP backends work the same way; the HTTP backend is plain `GET`/`PUT`/`HEAD` over stdlib `urllib`, so any object store with PUT enabled is fair game.
 
+## When NOT to use `@cached`
+
+`@cached` shines on deterministic, input-driven work — `lint`, `typecheck`,
+`test`, `build`. It's the wrong fit when the task is *the world reacting*.
+Skip it (or be very deliberate about `inputs=` and `env=`) when the task:
+
+- has external side effects — DB writes, HTTP requests, sending email, queue
+  pushes. A cache hit means none of that happened on this run.
+- mutates shared state your other tasks read — caches, file ownership, the
+  contents of `.env`, dotted-out feature flags, the kernel's TCP backlog.
+- depends on the clock or on randomness — anything where the same inputs
+  produce different output tomorrow.
+- *exists to test the world* — smoke tasks, integration probes, "does prod
+  still look healthy" scenarios. The whole point is to re-execute.
+
+For these, plain `@task` is the right call. Reach for `parallel=False` if
+the task must run alone (releases, migrations); reach for `@group(...)` to
+namespace them; don't reach for `@cached`.
+
 ## Live DAG display
 
 Run `ntask check` from an interactive terminal and a Textual TUI shows a live tree of the DAG with per-task state icons and durations. Pipe the output, set `tui = false` in `[tool.ntask]`, or pass `--no-tui` to fall back to the line-based renderer.

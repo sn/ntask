@@ -7,6 +7,11 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Documentation
+- New README section "When NOT to use `@cached`" documenting the categories
+  of task — side effects, mutating shared state, time- or randomness-
+  dependent, world-probing — where caching is the wrong default.
+
 ### Added
 - `@task(deps=...)` now accepts a zero-arg callable returning an iterable of
   task refs — e.g. `@task(deps=lambda: [a, b])` — so dependent tasks can sit
