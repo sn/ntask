@@ -7,6 +7,16 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Fixed
+- `_LogTee` (the `sys.stdout` / `sys.stderr` proxy installed by the executor
+  to capture per-task output) was writing to the underlying stream even
+  under the TUI. Textual owns stdout but not stderr, so library code that
+  used `logging` to stderr (very common — structured JSON loggers, etc.)
+  bled raw lines straight onto the live DAG view. The tee now consults
+  `_current_silent_capture` and suppresses the underlying write while the
+  TUI is active. The per-task log file still receives every line, so
+  nothing is dropped — only the terminal stream is quiet.
+
 ### Documentation
 - `docs/design/pre-post-hooks.md` captures the deferred design for
   per-task before/after hooks: why composition (`@with_reset`) is the

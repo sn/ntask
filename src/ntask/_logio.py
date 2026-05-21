@@ -8,13 +8,19 @@ when a per-task log file is set in the current async context via
 This is what makes raw ``print()`` output from inside a task body recoverable
 from disk after the run — including under the TUI, where Textual would
 otherwise be the only consumer of the write.
+
+Under the TUI, the underlying write is suppressed (`_current_silent_capture`
+is True). Textual owns ``sys.stdout`` but not ``sys.stderr`` — a Python
+``logging`` handler writing to stderr would otherwise spill JSON / formatted
+log lines straight onto the terminal, corrupting the live DAG view. The
+per-task log file remains the authoritative record.
 """
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from ._shell import _current_log_file
+from ._shell import _current_log_file, _current_silent_capture
 
 
 class _LogTee:
@@ -23,6 +29,11 @@ class _LogTee:
     The log file is resolved from the ``_current_log_file`` ContextVar on
     every write, so concurrent anyio tasks each get routed to their own
     file without sharing state through the proxy.
+
+    When ``_current_silent_capture`` is True the underlying stream is NOT
+    written to — the log file becomes the only sink. The executor flips
+    that flag for TUI runs so library code that logs to stderr can't
+    bleed through the renderer.
     """
 
     __slots__ = ("_underlying",)
@@ -31,13 +42,21 @@ class _LogTee:
         self._underlying = underlying
 
     def write(self, s: str) -> int:
-        try:
-            written = self._underlying.write(s)
-            n = int(written) if written is not None else len(s)
-        except Exception:
-            # Capture must never break a task body; fall back to the
-            # nominal byte count and continue to the log file.
+        silent = _current_silent_capture.get()
+        if silent:
+            # TUI mode — keep the terminal clean and let the log file be
+            # the record. We still return a credible byte count so the
+            # caller (logging handlers, print, etc.) sees a successful
+            # write.
             n = len(s)
+        else:
+            try:
+                written = self._underlying.write(s)
+                n = int(written) if written is not None else len(s)
+            except Exception:
+                # Capture must never break a task body; fall back to the
+                # nominal byte count and continue to the log file.
+                n = len(s)
         log_path = _current_log_file.get()
         if log_path is not None and s:
             _append_to_log(log_path, s)
@@ -48,6 +67,9 @@ class _LogTee:
             self.write(line)
 
     def flush(self) -> None:
+        if _current_silent_capture.get():
+            # Nothing was written to the underlying stream; no flush needed.
+            return
         try:
             self._underlying.flush()
         except Exception:  # noqa: S110 — capture must never break a task

@@ -138,3 +138,106 @@ async def test_max_runs_zero_disables_retention(tmp_path: Path):
 
     # Seed survived because retention was disabled.
     assert (runs_root / "00000000T000000-001Z").is_dir()
+
+
+def test_logtee_silent_capture_blocks_underlying_write_keeps_log_file(
+    tmp_path: Path,
+):
+    """Regression: under the TUI the stdout/stderr tee must NOT write to
+    the underlying stream — Textual owns stdout but not stderr, so a
+    logging-to-stderr handler used to spill JSON over the live DAG view.
+    The per-task log file must still receive everything.
+    """
+    from io import StringIO
+
+    from ntask._logio import _LogTee
+    from ntask._shell import _current_log_file, _current_silent_capture
+
+    underlying = StringIO()
+    tee = _LogTee(underlying)
+    log_path = tmp_path / "task.log"
+
+    log_token = _current_log_file.set(log_path)
+    silent_token = _current_silent_capture.set(True)
+    try:
+        n = tee.write('{"timestamp": "2026-05-21T12:24:06", "level": "info"}\n')
+        tee.flush()
+    finally:
+        _current_silent_capture.reset(silent_token)
+        _current_log_file.reset(log_token)
+
+    # Caller still sees a "successful" write.
+    assert n > 0
+    # The terminal-side stream stayed empty — this is the regression.
+    assert underlying.getvalue() == ""
+    # The log file got the line.
+    assert '"timestamp"' in log_path.read_text(encoding="utf-8")
+
+
+def test_logtee_non_silent_mode_still_writes_to_underlying(tmp_path: Path):
+    """In line-renderer mode (silent=False) the tee must still mirror to
+    the underlying stream so terminal output survives, and also to the
+    log file."""
+    from io import StringIO
+
+    from ntask._logio import _LogTee
+    from ntask._shell import _current_log_file
+
+    underlying = StringIO()
+    tee = _LogTee(underlying)
+    log_path = tmp_path / "task.log"
+
+    token = _current_log_file.set(log_path)
+    try:
+        tee.write("visible-on-terminal\n")
+    finally:
+        _current_log_file.reset(token)
+
+    assert "visible-on-terminal" in underlying.getvalue()
+    assert "visible-on-terminal" in log_path.read_text(encoding="utf-8")
+
+
+async def test_executor_silent_capture_under_lifecycle_renderer(tmp_path: Path):
+    """End-to-end: when a lifecycle (TUI-style) renderer is active, a
+    task that writes to stderr must not reach the captured stderr stream,
+    but the per-task log must still contain the line.
+    """
+    import sys as _sys
+
+    @task
+    def emit_log():
+        print("structured-log-line", file=_sys.stderr)
+
+    # Minimal stub that looks like the TUI to the executor (has start/stop).
+    class _StubLifecycleRenderer:
+        def start(self, *, graph, logs_dir): pass
+        def stop(self): pass
+        def on_running(self, fqn, *, cmd): pass
+        def on_ok(self, fqn, *, duration): pass
+        def on_cached(self, fqn, *, key, source="local"): pass
+        def on_miss_reason(self, fqn, *, report): pass
+        def on_failed(self, fqn, *, error, tail_lines): pass
+        def summary(self, **kwargs): pass
+
+    # Capture the *underlying* stderr that the executor will save & wrap.
+    from io import StringIO
+    saved = _sys.stderr
+    fake_stderr = StringIO()
+    _sys.stderr = fake_stderr
+    try:
+        cfg = ExecutionConfig(
+            root=tmp_path, concurrency=1,
+            renderer=_StubLifecycleRenderer(),
+        )
+        await Executor(default_registry(), cfg).run(["emit_log"])
+    finally:
+        _sys.stderr = saved
+
+    # The line must NOT have reached the underlying stderr — that's
+    # where Textual is rendering and it would corrupt the TUI.
+    assert "structured-log-line" not in fake_stderr.getvalue()
+
+    # The log file still has it.
+    run_dir = next((tmp_path / ".ntask" / "runs").iterdir())
+    log = (run_dir / "emit_log.log").read_text(encoding="utf-8")
+    assert "structured-log-line" in log
