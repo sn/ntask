@@ -58,6 +58,9 @@ def _build_global_parser() -> argparse.ArgumentParser:
                    help="Per-run log directory (default <root>/.ntask/runs).")
     p.add_argument("--max-runs", type=int, default=None, metavar="N",
                    help="Retain only the N most recent run dirs (default 50).")
+    p.add_argument("--tb", choices=["short", "long", "line", "none"],
+                   default="short",
+                   help="Traceback mode for task failures (default short).")
     p.add_argument("--version", action="version", version=f"ntask {__version__}")
     p.add_argument("-h", "--help", action="store_true")
     p.add_argument("task", nargs="?")
@@ -85,6 +88,7 @@ Flags:
   --no-tui                Disable the TUI; use the line-based renderer
   --log-dir DIR           Per-run log directory (default <root>/.ntask/runs)
   --max-runs N            Retain only the N most recent run dirs (default 50)
+  --tb MODE               Traceback for failures: short|long|line|none
   --version, -h, --help
 
 Subcommands:
@@ -285,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             renderer=watch_renderer,
             log_dir=Path(ns.log_dir) if ns.log_dir else None,
             max_runs=ns.max_runs if ns.max_runs is not None else 50,
+            tb=ns.tb,
         )
 
         watch_task = t  # narrowed: Task (not None - checked above)
@@ -400,6 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         renderer=renderer,
         log_dir=Path(ns.log_dir) if ns.log_dir else None,
         max_runs=ns.max_runs if ns.max_runs is not None else 50,
+        tb=ns.tb,
     )
     executor = Executor(reg, exec_cfg)
 

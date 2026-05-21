@@ -8,6 +8,10 @@ this project uses semantic versioning.
 ## [Unreleased]
 
 ### Added
+- Task failures now stream a traceback to stderr by default and append the
+  full traceback to the per-task log file. New `--tb` global flag accepts
+  `short` (default), `long`, `line`, or `none` — the renderer's one-line
+  `x <fqn> FAILED: ...` summary on stdout is unchanged.
 - Per-task log files are now written for every run, regardless of which
   renderer is active. The on-disk layout is
   `.ntask/runs/<UTC-run-id>/<task-fqn>.log` plus a `run.json` manifest with

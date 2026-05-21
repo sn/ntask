@@ -5,10 +5,11 @@ import json
 import shutil
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 
@@ -22,6 +23,8 @@ from ._registry import Registry
 from ._remote import RemoteBackend, make_backend
 from ._shell import _current_line_prefix, _current_log_file, _current_silent_capture
 from ._task import Task
+
+TbMode = Literal["short", "long", "line", "none"]
 
 DEFAULT_MAX_RUNS = 50
 
@@ -40,6 +43,9 @@ class ExecutionConfig:
     # Number of recent run directories to retain; older ones are pruned at
     # run start. Set to 0 to disable retention.
     max_runs: int = DEFAULT_MAX_RUNS
+    # Traceback formatting mode for failures. ``none`` mirrors the pre-1.2
+    # behaviour (renderer's one-line summary only).
+    tb: TbMode = "short"
 
 
 @dataclass(slots=True)
@@ -172,6 +178,12 @@ class Executor:
                     report: MissReport = diff_cache_state(breakdown, prior_bd)
                     self.config.renderer.on_miss_reason(fqn, report=report)
 
+            # Pre-compute the per-task log path so the except handler below
+            # can append a traceback to it even if the failure happens
+            # before _invoke().
+            log_path = logs_dir / f"{fqn}.log"
+            result.log_paths[fqn] = log_path.name
+
             exclusive = not t.parallel
             await coordinator.enter(exclusive=exclusive)
             try:
@@ -185,10 +197,8 @@ class Executor:
                     # installed for the run appends print() output to this
                     # file; under the TUI, shell() also routes there
                     # directly so it doesn't fight Textual for the screen.
-                    log_path = logs_dir / f"{fqn}.log"
                     log_token = _current_log_file.set(log_path)
                     silent_token = _current_silent_capture.set(needs_lifecycle)
-                    result.log_paths[fqn] = log_path.name
 
                     # Prefix only when TUI is NOT active (TUI owns the screen).
                     prefix_token = (
@@ -223,6 +233,9 @@ class Executor:
             except BaseException as e:
                 failures[fqn] = e
                 result.failed.append(fqn)
+                _emit_failure_traceback(
+                    fqn=fqn, exc=e, mode=self.config.tb, log_path=log_path,
+                )
                 if self.config.renderer:
                     self.config.renderer.on_failed(fqn, error=e, tail_lines=[])
                 done[fqn].set()
@@ -267,6 +280,52 @@ class Executor:
             await underlying(**kwargs)
         else:
             await anyio.to_thread.run_sync(lambda: t.func(**kwargs))
+
+
+def _format_traceback(exc: BaseException, mode: TbMode) -> str:
+    """Render an exception per ``--tb`` mode.
+
+    - ``none``: empty string (renderer's one-liner remains the only output).
+    - ``line``: ``ExcType: message`` only.
+    - ``short``: ``file:line: ExcType: message`` using the deepest frame.
+    - ``long``: full traceback.
+    """
+    if mode == "none":
+        return ""
+    if mode == "line":
+        return f"{type(exc).__name__}: {exc}\n"
+    if mode == "long":
+        return "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__),
+        )
+    # short: deepest frame location + one-liner.
+    frames = traceback.extract_tb(exc.__traceback__)
+    if frames:
+        last = frames[-1]
+        return f"{last.filename}:{last.lineno}: {type(exc).__name__}: {exc}\n"
+    return f"{type(exc).__name__}: {exc}\n"
+
+
+def _emit_failure_traceback(
+    *, fqn: str, exc: BaseException, mode: TbMode, log_path: Path,
+) -> None:
+    """Stream a per-mode traceback to stderr and persist the full traceback
+    to the per-task log file. Best-effort — never raises."""
+    formatted = _format_traceback(exc, mode)
+    if formatted:
+        try:
+            sys.stderr.write(formatted)
+            sys.stderr.flush()
+        except Exception:  # noqa: S110 — emission must never break a run
+            pass
+    # The log file always gets the full traceback regardless of stderr mode,
+    # so a `--tb=none` run still produces a post-mortem record on disk.
+    full = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    try:
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(f"\n--- traceback ({fqn}) ---\n{full}")
+    except OSError:
+        pass
 
 
 def _utc_run_id() -> str:
