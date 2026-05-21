@@ -13,6 +13,10 @@ this project uses semantic versioning.
   dependent, world-probing — where caching is the wrong default.
 
 ### Added
+- Shell completion: `ntask --completion bash|zsh|fish` prints a completion
+  script. The script calls back into `ntask --completion-tasks` and
+  `ntask --completion-flags <task>`, so task and per-task flag suggestions
+  stay in sync with the project's actual `tasks.py`.
 - `ntask init` scaffolds a minimal `tasks.py` in the current directory.
   `--template plain|django|fastapi` chooses the boilerplate (django/fastapi
   templates ship the framework bootstrap block users had to hand-roll).

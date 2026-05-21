@@ -61,6 +61,13 @@ def _build_global_parser() -> argparse.ArgumentParser:
     p.add_argument("--tb", choices=["short", "long", "line", "none"],
                    default="short",
                    help="Traceback mode for task failures (default short).")
+    p.add_argument("--completion", choices=["bash", "zsh", "fish"],
+                   metavar="SHELL",
+                   help="Emit a shell completion script and exit.")
+    p.add_argument("--completion-tasks", action="store_true",
+                   help=argparse.SUPPRESS)
+    p.add_argument("--completion-flags", metavar="TASK",
+                   help=argparse.SUPPRESS)
     p.add_argument("--version", action="version", version=f"ntask {__version__}")
     p.add_argument("-h", "--help", action="store_true")
     p.add_argument("task", nargs="?")
@@ -89,6 +96,7 @@ Flags:
   --log-dir DIR           Per-run log directory (default <root>/.ntask/runs)
   --max-runs N            Retain only the N most recent run dirs (default 50)
   --tb MODE               Traceback for failures: short|long|line|none
+  --completion SHELL      Emit a bash/zsh/fish completion script
   --version, -h, --help
 
 Subcommands:
@@ -97,6 +105,47 @@ Subcommands:
   ntask clean [--all]     Wipe .ntask/ cache
   ntask watch <task>      Rerun the task when its @cached inputs change
 """)
+
+
+def _discover_quietly() -> bool:
+    """Run discovery without raising; returns True on success.
+
+    Used by completion handlers — they must stay silent if discovery fails,
+    so the shell doesn't spam errors into the user's prompt.
+    """
+    default_registry().clear()
+    try:
+        discover(Path.cwd())
+    except Exception:
+        return False
+    return True
+
+
+def _handle_completion_tasks() -> int:
+    if not _discover_quietly():
+        return 0
+    for t in sorted(default_registry().all(), key=lambda x: x.fqn):
+        print(t.fqn)
+    return 0
+
+
+def _handle_completion_flags(fqn: str) -> int:
+    if not _discover_quietly():
+        return 0
+    t = default_registry().try_get(fqn)
+    if t is None:
+        return 0
+    import inspect
+    sig = inspect.signature(t.func)
+    for name, param in sig.parameters.items():
+        # Required positionals don't get a flag; bool default=True flips to --no-.
+        if param.default is inspect.Parameter.empty:
+            continue
+        if param.annotation is bool and param.default is True:
+            print(f"--no-{name}")
+        else:
+            print(f"--{name}")
+    return 0
 
 
 def _handle_clean(root: Path, clean_all: bool) -> int:
@@ -199,6 +248,17 @@ def main(argv: list[str] | None = None) -> int:
     if ns.help and not ns.task:
         _print_global_help()
         return 0
+
+    if ns.completion:
+        from ._completion import completion_script
+        print(completion_script(ns.completion))
+        return 0
+
+    if ns.completion_tasks:
+        return _handle_completion_tasks()
+
+    if ns.completion_flags:
+        return _handle_completion_flags(ns.completion_flags)
 
     if ns.task == "init":
         from ._init import init_project
