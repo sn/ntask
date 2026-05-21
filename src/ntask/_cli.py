@@ -92,6 +92,8 @@ Flags:
   --version, -h, --help
 
 Subcommands:
+  ntask init [--template=plain|django|fastapi] [--force]
+                          Scaffold a minimal tasks.py in the current dir
   ntask clean [--all]     Wipe .ntask/ cache
   ntask watch <task>      Rerun the task when its @cached inputs change
 """)
@@ -197,6 +199,27 @@ def main(argv: list[str] | None = None) -> int:
     if ns.help and not ns.task:
         _print_global_help()
         return 0
+
+    if ns.task == "init":
+        from ._init import init_project
+        init_parser = argparse.ArgumentParser(prog="ntask init")
+        init_parser.add_argument(
+            "--template", choices=["plain", "django", "fastapi"], default="plain",
+            help="Which scaffold to write (default plain).",
+        )
+        init_parser.add_argument(
+            "--force", action="store_true",
+            help="Overwrite an existing tasks.py.",
+        )
+        init_ns = init_parser.parse_args(ns.task_args)
+        code, msg = init_project(
+            root=Path.cwd(), template=init_ns.template, force=init_ns.force,
+        )
+        if code == 0:
+            print(msg)
+        else:
+            print(msg, file=sys.stderr)
+        return code
 
     if ns.task == "clean":
         try:

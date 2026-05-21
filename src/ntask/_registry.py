@@ -9,7 +9,7 @@ from ._task import CachedConfig, Task
 # Top-level CLI subcommands that shadow same-named user tasks. Routing
 # isn't changed (people rely on `ntask clean` wiping `.ntask/`); the
 # registry warns so users notice their task body never ran.
-RESERVED_SUBCOMMANDS: frozenset[str] = frozenset({"clean", "watch"})
+RESERVED_SUBCOMMANDS: frozenset[str] = frozenset({"clean", "init", "watch"})
 
 
 class Registry:

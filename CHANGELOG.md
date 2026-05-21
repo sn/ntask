@@ -13,6 +13,12 @@ this project uses semantic versioning.
   dependent, world-probing — where caching is the wrong default.
 
 ### Added
+- `ntask init` scaffolds a minimal `tasks.py` in the current directory.
+  `--template plain|django|fastapi` chooses the boilerplate (django/fastapi
+  templates ship the framework bootstrap block users had to hand-roll).
+  Refuses to overwrite an existing `tasks.py` without `--force`. `init` is
+  also reserved, so naming a task `init` now emits the same shadowing
+  warning as `clean` / `watch`.
 - `ntask --list` now renders each task's CLI signature next to its name —
   `<required: type>`, `[--name=default]`, `[--flag]` for bool default-False,
   `[--no-flag]` for default-True. Long signatures are truncated at 40 chars
