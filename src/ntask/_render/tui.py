@@ -193,12 +193,20 @@ class TUIRenderer:
             self._app.call_from_thread(self._app.update_state, fqn, "failed")
 
     def summary(
-        self, *, ran: int, cached: int, failed: int, skipped: int,
+        self,
+        *,
+        ran: int,
+        cached: int,
+        failed: int,
+        skipped: int,
+        failed_fqns: tuple[str, ...] = (),
     ) -> None:
         text = (
             f"{ran} ran, {cached} cached, {failed} failed, {skipped} skipped"
             f"  ·  logs: {self._logs_dir}"
         )
+        if failed_fqns:
+            text += f"  ·  failed: {', '.join(failed_fqns)}"
         self._final_summary = text
         footer = f"{text}  ·  press q/esc to quit"
         if self._app.is_running:

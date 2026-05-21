@@ -4,6 +4,25 @@ from ntask._cache.diff import MissItem, MissReport
 from ntask._render.log import LogRenderer
 
 
+def test_log_renderer_summary_lists_failed_tasks():
+    buf = StringIO()
+    r = LogRenderer(stream=buf, use_color=False)
+    r.summary(
+        ran=2, cached=1, failed=2, skipped=0,
+        failed_fqns=("scenario_a", "scenario_b"),
+    )
+    out = buf.getvalue()
+    assert "failed=2" in out
+    assert "failed tasks: scenario_a, scenario_b" in out
+
+
+def test_log_renderer_summary_omits_failed_line_when_none_failed():
+    buf = StringIO()
+    r = LogRenderer(stream=buf, use_color=False)
+    r.summary(ran=2, cached=1, failed=0, skipped=0)
+    assert "failed tasks:" not in buf.getvalue()
+
+
 def test_log_renderer_reports_running_and_ok():
     buf = StringIO()
     r = LogRenderer(stream=buf, use_color=False)

@@ -40,10 +40,22 @@ class RichRenderer:
         for line in tail_lines[-20:]:
             self.console.print(f"    {line}")
 
-    def summary(self, *, ran: int, cached: int, failed: int, skipped: int) -> None:
+    def summary(
+        self,
+        *,
+        ran: int,
+        cached: int,
+        failed: int,
+        skipped: int,
+        failed_fqns: tuple[str, ...] = (),
+    ) -> None:
         parts = [f"[green]{ran}[/green] ran", f"[dim]{cached} cached[/dim]"]
         if failed:
             parts.append(f"[red]{failed} failed[/red]")
         if skipped:
             parts.append(f"[yellow]{skipped} skipped[/yellow]")
         self.console.print("  ".join(parts))
+        if failed_fqns:
+            self.console.print(
+                "[red]failed tasks:[/red] " + ", ".join(failed_fqns)
+            )

@@ -13,6 +13,9 @@ this project uses semantic versioning.
   dependent, world-probing — where caching is the wrong default.
 
 ### Added
+- The end-of-run summary now lists the failed tasks by name on a second
+  line — useful for `--keep-going` runs where there was no fail-fast and
+  the user would otherwise have to scroll back through the log.
 - Shell completion: `ntask --completion bash|zsh|fish` prints a completion
   script. The script calls back into `ntask --completion-tasks` and
   `ntask --completion-flags <task>`, so task and per-task flag suggestions

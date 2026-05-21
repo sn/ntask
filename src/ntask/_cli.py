@@ -509,6 +509,7 @@ def main(argv: list[str] | None = None) -> int:
                 renderer.summary(
                     ran=len(result.ran), cached=len(result.cached),
                     failed=len(result.failed), skipped=len(result.skipped),
+                    failed_fqns=tuple(result.failed),
                 )
             except BaseException as exc:
                 exc_holder[0] = exc
@@ -532,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
                 renderer.summary(
                     ran=len(result.ran), cached=len(result.cached),
                     failed=len(result.failed), skipped=len(result.skipped),
+                    failed_fqns=tuple(result.failed),
                 )
             return 0 if not result.failed else 1
         except CycleError as e:

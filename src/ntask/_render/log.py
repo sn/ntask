@@ -34,5 +34,15 @@ class LogRenderer:
         for line in tail_lines[-20:]:
             self._p(f"    {line}")
 
-    def summary(self, *, ran: int, cached: int, failed: int, skipped: int) -> None:
+    def summary(
+        self,
+        *,
+        ran: int,
+        cached: int,
+        failed: int,
+        skipped: int,
+        failed_fqns: tuple[str, ...] = (),
+    ) -> None:
         self._p(f"done. ran={ran} cached={cached} failed={failed} skipped={skipped}")
+        if failed_fqns:
+            self._p(f"failed tasks: {', '.join(failed_fqns)}")
