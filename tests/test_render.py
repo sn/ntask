@@ -23,6 +23,30 @@ def test_log_renderer_summary_omits_failed_line_when_none_failed():
     assert "failed tasks:" not in buf.getvalue()
 
 
+def test_log_renderer_progress_prefix_shows_counts():
+    buf = StringIO()
+    r = LogRenderer(stream=buf, use_color=False)
+    r.set_total(3)
+    r.on_running("a", cmd=None)
+    r.on_ok("a", duration=0.1)
+    r.on_running("b", cmd=None)
+    r.on_ok("b", duration=0.1)
+    r.on_running("c", cmd=None)
+    out = buf.getvalue()
+    assert "[0/3 done; next: a]" in out
+    assert "[1/3 done; next: b]" in out
+    assert "[2/3 done; next: c]" in out
+
+
+def test_log_renderer_progress_prefix_silent_for_single_task():
+    """No progress noise when the run has only one task."""
+    buf = StringIO()
+    r = LogRenderer(stream=buf, use_color=False)
+    r.set_total(1)
+    r.on_running("solo", cmd=None)
+    assert "done; next" not in buf.getvalue()
+
+
 def test_log_renderer_reports_running_and_ok():
     buf = StringIO()
     r = LogRenderer(stream=buf, use_color=False)

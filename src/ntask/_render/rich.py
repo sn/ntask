@@ -15,15 +15,30 @@ class RichRenderer:
         )
         self.verbose = verbose
         self.quiet = quiet
+        self._total: int = 0
+        self._done: int = 0
+
+    def set_total(self, total: int) -> None:
+        self._total = total
+        self._done = 0
+
+    def _progress_prefix(self, next_fqn: str) -> str:
+        if self._total <= 1:
+            return ""
+        return f"[dim][{self._done}/{self._total} done; next: {next_fqn}][/dim] "
 
     def on_running(self, fqn: str, *, cmd: str | None) -> None:
         suffix = f" [dim]:: {cmd}[/dim]" if cmd else ""
-        self.console.print(f"[cyan]⠋ {fqn}[/cyan]{suffix}")
+        self.console.print(
+            f"{self._progress_prefix(fqn)}[cyan]⠋ {fqn}[/cyan]{suffix}"
+        )
 
     def on_ok(self, fqn: str, *, duration: float) -> None:
+        self._done += 1
         self.console.print(f"[green]+[/green] {fqn} [dim]({duration:.2f}s)[/dim]")
 
     def on_cached(self, fqn: str, *, key: str, source: str = "local") -> None:
+        self._done += 1
         if self.quiet:
             return
         suffix = " [remote]" if source == "remote" else ""
@@ -35,6 +50,7 @@ class RichRenderer:
         )
 
     def on_failed(self, fqn: str, *, error: BaseException, tail_lines: list[str]) -> None:
+        self._done += 1
         self.console.rule(f"[red]FAILED[/red] {fqn}")
         self.console.print(f"[red]{error}[/red]")
         for line in tail_lines[-20:]:

@@ -13,6 +13,10 @@ this project uses semantic versioning.
   dependent, world-probing — where caching is the wrong default.
 
 ### Added
+- The line-based renderers (`LogRenderer`, `RichRenderer`) now prefix each
+  `running <fqn>` line with `[k/n done; next: <fqn>]` so multi-task runs
+  no longer feel positionally opaque. Silent for single-task runs. The
+  TUI already provided this implicitly via the live tree.
 - The end-of-run summary now lists the failed tasks by name on a second
   line — useful for `--keep-going` runs where there was no fail-fast and
   the user would otherwise have to scroll back through the log.

@@ -129,6 +129,12 @@ class Executor:
         )
         if needs_lifecycle:
             self.config.renderer.start(graph=sub, logs_dir=logs_dir)
+        # Line renderers expose `set_total(n)` so they can emit a
+        # [k/n done; next: <fqn>] progress prefix on each on_running.
+        if self.config.renderer is not None and hasattr(
+            self.config.renderer, "set_total",
+        ):
+            self.config.renderer.set_total(len(order))
 
         async def run_one(fqn: str) -> None:
             for dep in sub.direct_deps(fqn):
