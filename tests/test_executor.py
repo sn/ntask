@@ -472,7 +472,7 @@ async def test_executor_calls_start_and_stop_when_lifecycle_renderer(tmp_path: P
     assert renderer.events[-1] == "stop"
 
 
-async def test_executor_creates_logs_dir_when_lifecycle_renderer(tmp_path: Path):
+async def test_executor_creates_runs_dir_when_lifecycle_renderer(tmp_path: Path):
     (tmp_path / "x.py").write_text("v1")
 
     @task
@@ -483,9 +483,9 @@ async def test_executor_creates_logs_dir_when_lifecycle_renderer(tmp_path: Path)
     cfg = ExecutionConfig(root=tmp_path, concurrency=1, renderer=renderer)
     await Executor(default_registry(), cfg).run(["build"])
 
-    logs_root = tmp_path / ".ntask" / "logs"
-    assert logs_root.is_dir()
-    run_dirs = list(logs_root.iterdir())
+    runs_root = tmp_path / ".ntask" / "runs"
+    assert runs_root.is_dir()
+    run_dirs = list(runs_root.iterdir())
     assert len(run_dirs) == 1
     run_dir = run_dirs[0]
     # Verify start() received this dir
@@ -493,8 +493,9 @@ async def test_executor_creates_logs_dir_when_lifecycle_renderer(tmp_path: Path)
     assert start_event[2] == run_dir
 
 
-async def test_executor_no_logs_dir_for_plain_renderer(tmp_path: Path):
-    """LogRenderer has no start/stop methods → no logs dir created."""
+async def test_executor_creates_runs_dir_even_for_plain_renderer(tmp_path: Path):
+    """LogRenderer has no start/stop, but the run dir is still created so the
+    on-disk record exists regardless of which renderer was active."""
     from ntask._render.log import LogRenderer
 
     (tmp_path / "x.py").write_text("v1")
@@ -506,7 +507,9 @@ async def test_executor_no_logs_dir_for_plain_renderer(tmp_path: Path):
     renderer = LogRenderer(use_color=False)
     cfg = ExecutionConfig(root=tmp_path, concurrency=1, renderer=renderer)
     await Executor(default_registry(), cfg).run(["build"])
-    assert not (tmp_path / ".ntask" / "logs").exists()
+    runs_root = tmp_path / ".ntask" / "runs"
+    assert runs_root.is_dir()
+    assert len(list(runs_root.iterdir())) == 1
 
 
 async def test_executor_per_task_log_file_captures_shell_output(tmp_path: Path):
@@ -526,8 +529,8 @@ async def test_executor_per_task_log_file_captures_shell_output(tmp_path: Path):
     cfg = ExecutionConfig(root=tmp_path, concurrency=1, renderer=renderer)
     await Executor(default_registry(), cfg).run(["build"])
 
-    logs_root = tmp_path / ".ntask" / "logs"
-    run_dir = next(logs_root.iterdir())
+    runs_root = tmp_path / ".ntask" / "runs"
+    run_dir = next(runs_root.iterdir())
     log_file = run_dir / "build.log"
     assert log_file.is_file()
     assert b"task-output-marker" in log_file.read_bytes()

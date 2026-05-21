@@ -5,7 +5,12 @@ import pytest
 
 from ntask import shell
 from ntask._errors import ShellError
-from ntask._shell import ShellResult, _current_line_prefix, _current_log_file
+from ntask._shell import (
+    ShellResult,
+    _current_line_prefix,
+    _current_log_file,
+    _current_silent_capture,
+)
 
 
 def test_shell_runs_string_command_success(capfd):
@@ -108,36 +113,52 @@ def test_shell_prefix_mode_nonzero_exit_raises_shell_error():
     assert exc_info.value.returncode == 4
 
 
+def _silent_log_ctx(log: Path):
+    """Set both context vars that put shell() into TUI-silent-log mode.
+
+    Returns a token-pair the caller resets in a finally block.
+    """
+    log_token = _current_log_file.set(log)
+    silent_token = _current_silent_capture.set(True)
+    return log_token, silent_token
+
+
+def _silent_log_reset(tokens) -> None:
+    log_token, silent_token = tokens
+    _current_silent_capture.reset(silent_token)
+    _current_log_file.reset(log_token)
+
+
 def test_shell_log_file_captures_stdout(tmp_path: Path):
     log = tmp_path / "task.log"
-    token = _current_log_file.set(log)
+    tokens = _silent_log_ctx(log)
     try:
         shell([sys.executable, "-c", "print('hello-log')"])
     finally:
-        _current_log_file.reset(token)
+        _silent_log_reset(tokens)
     content = log.read_bytes()
     assert b"hello-log" in content
 
 
 def test_shell_log_file_captures_stderr(tmp_path: Path):
     log = tmp_path / "task.log"
-    token = _current_log_file.set(log)
+    tokens = _silent_log_ctx(log)
     try:
         shell([sys.executable, "-c",
                "import sys; print('err-log', file=sys.stderr)"])
     finally:
-        _current_log_file.reset(token)
+        _silent_log_reset(tokens)
     assert b"err-log" in log.read_bytes()
 
 
 def test_shell_log_file_appends_across_calls(tmp_path: Path):
     log = tmp_path / "task.log"
-    token = _current_log_file.set(log)
+    tokens = _silent_log_ctx(log)
     try:
         shell([sys.executable, "-c", "print('first')"])
         shell([sys.executable, "-c", "print('second')"])
     finally:
-        _current_log_file.reset(token)
+        _silent_log_reset(tokens)
     content = log.read_bytes()
     assert b"first" in content
     assert b"second" in content
@@ -145,13 +166,27 @@ def test_shell_log_file_appends_across_calls(tmp_path: Path):
 
 def test_shell_log_file_nonzero_exit_raises(tmp_path: Path):
     log = tmp_path / "task.log"
-    token = _current_log_file.set(log)
+    tokens = _silent_log_ctx(log)
     try:
         with pytest.raises(ShellError) as exc_info:
             shell([sys.executable, "-c", "import sys; sys.exit(3)"])
     finally:
-        _current_log_file.reset(token)
+        _silent_log_reset(tokens)
     assert exc_info.value.returncode == 3
+
+
+def test_shell_log_file_alone_does_not_silence_terminal(tmp_path: Path, capfd):
+    """Without `_current_silent_capture`, shell() must still produce
+    terminal output — the per-run sys.stdout tee captures to the log file.
+    """
+    log = tmp_path / "task.log"
+    token = _current_log_file.set(log)
+    try:
+        shell([sys.executable, "-c", "print('still-on-terminal')"])
+    finally:
+        _current_log_file.reset(token)
+    out, _ = capfd.readouterr()
+    assert "still-on-terminal" in out
 
 
 def test_shell_capture_true_takes_precedence_over_log_file(tmp_path: Path):

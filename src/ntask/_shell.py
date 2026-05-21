@@ -20,6 +20,14 @@ _current_log_file: ContextVar[Path | None] = ContextVar(
     "_current_log_file", default=None
 )
 
+# When True, shell() routes subprocess stdout/stderr directly to
+# _current_log_file with no terminal output. The executor enables this
+# under the TUI (where Textual owns the screen); the line renderers keep
+# it False so prefixed/direct terminal output still works as before.
+_current_silent_capture: ContextVar[bool] = ContextVar(
+    "_current_silent_capture", default=False
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ShellResult:
@@ -188,9 +196,10 @@ def shell(
             raise ShellError(proc.returncode, cmd)
         return result
 
-    # Log-file mode - pipe stdout+stderr to a file (append), no terminal output.
+    # Silent log mode - pipe stdout+stderr to a file (append), no terminal
+    # output. Only used when explicitly requested (TUI owns the screen).
     log_path = _current_log_file.get()
-    if log_path is not None:
+    if log_path is not None and _current_silent_capture.get():
         rc = _run_to_logfile(
             cmd,
             log_path=log_path,

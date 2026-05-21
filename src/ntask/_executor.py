@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import inspect
+import json
+import shutil
+import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +17,13 @@ from ._cache.diff import MissReport, diff_cache_state
 from ._config import load_project_config
 from ._coordinator import _ParallelCoordinator
 from ._dag import build_graph, toposort
+from ._logio import _LogTee
 from ._registry import Registry
 from ._remote import RemoteBackend, make_backend
-from ._shell import _current_line_prefix, _current_log_file
+from ._shell import _current_line_prefix, _current_log_file, _current_silent_capture
 from ._task import Task
+
+DEFAULT_MAX_RUNS = 50
 
 
 @dataclass(slots=True)
@@ -29,6 +35,11 @@ class ExecutionConfig:
     keep_going: bool = False
     offline: bool = False
     renderer: Any = None
+    # Per-run log directory; if None, defaults to <root>/.ntask/runs/<run-id>.
+    log_dir: Path | None = None
+    # Number of recent run directories to retain; older ones are pruned at
+    # run start. Set to 0 to disable retention.
+    max_runs: int = DEFAULT_MAX_RUNS
 
 
 @dataclass(slots=True)
@@ -37,6 +48,14 @@ class RunResult:
     cached: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # Per-task wall-clock seconds; only populated for tasks that ran (not
+    # cached/skipped).
+    durations: dict[str, float] = field(default_factory=dict)
+    # Per-task captured-log path, relative to the run dir; absent for tasks
+    # that produced no output.
+    log_paths: dict[str, str] = field(default_factory=dict)
+    # The directory holding per-task logs + run.json for this invocation.
+    run_dir: Path | None = None
 
 
 def _resolve_remote(config: ExecutionConfig) -> RemoteBackend | None:
@@ -84,17 +103,25 @@ class Executor:
         coordinator = _ParallelCoordinator()
         prefix_enabled = self.config.concurrency > 1
 
-        # Lifecycle-aware renderer setup (TUI + log capture).
+        # Per-run log directory + stdout/stderr capture is always set up,
+        # regardless of which renderer is active. This is the authoritative
+        # record of what each task produced; the TUI and line renderers are
+        # both live views on top of it.
+        run_id = _utc_run_id()
+        runs_root = self.config.log_dir or (self.config.root / ".ntask" / "runs")
+        logs_dir = runs_root / run_id
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        result.run_dir = logs_dir
+        _prune_old_runs(runs_root, keep=self.config.max_runs, current=logs_dir)
+        started_at_utc = datetime.now(UTC)
+
+        # Lifecycle-aware renderer setup (TUI is currently the only consumer).
         needs_lifecycle = (
             self.config.renderer is not None
             and hasattr(self.config.renderer, "start")
             and hasattr(self.config.renderer, "stop")
         )
-        logs_dir: Path | None = None
         if needs_lifecycle:
-            run_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")[:-3]
-            logs_dir = self.config.root / ".ntask" / "logs" / run_id
-            logs_dir.mkdir(parents=True, exist_ok=True)
             self.config.renderer.start(graph=sub, logs_dir=logs_dir)
 
         async def run_one(fqn: str) -> None:
@@ -154,16 +181,19 @@ class Executor:
                     kwargs = task_kwargs.get(fqn, {})
                     started = time.perf_counter()
 
-                    # Set the per-task log file (TUI / lifecycle renderer path).
-                    log_token = None
-                    if logs_dir is not None:
-                        log_path = logs_dir / f"{fqn}.log"
-                        log_token = _current_log_file.set(log_path)
+                    # Set the per-task log file. The stdout/stderr tee
+                    # installed for the run appends print() output to this
+                    # file; under the TUI, shell() also routes there
+                    # directly so it doesn't fight Textual for the screen.
+                    log_path = logs_dir / f"{fqn}.log"
+                    log_token = _current_log_file.set(log_path)
+                    silent_token = _current_silent_capture.set(needs_lifecycle)
+                    result.log_paths[fqn] = log_path.name
 
                     # Prefix only when TUI is NOT active (TUI owns the screen).
                     prefix_token = (
                         _current_line_prefix.set(fqn)
-                        if prefix_enabled and logs_dir is None
+                        if prefix_enabled and not needs_lifecycle
                         else None
                     )
                     try:
@@ -171,10 +201,11 @@ class Executor:
                     finally:
                         if prefix_token is not None:
                             _current_line_prefix.reset(prefix_token)
-                        if log_token is not None:
-                            _current_log_file.reset(log_token)
+                        _current_silent_capture.reset(silent_token)
+                        _current_log_file.reset(log_token)
 
                     elapsed = time.perf_counter() - started
+                    result.durations[fqn] = elapsed
                     stored_entry = None
                     if key is not None and breakdown is not None:
                         stored_entry = self.cache.store_entry(
@@ -203,13 +234,30 @@ class Executor:
                 done[fqn].set()
                 await coordinator.exit(exclusive=exclusive)
 
+        # Tee sys.stdout/sys.stderr so raw print() from Python task bodies
+        # is appended to the per-task log file (resolved via context var).
+        # Capture AFTER renderer.start() — if Textual replaced stdout there,
+        # we wrap its replacement rather than the original tty.
+        saved_stdout, saved_stderr = sys.stdout, sys.stderr
+        sys.stdout = _LogTee(saved_stdout)
+        sys.stderr = _LogTee(saved_stderr)
         try:
             async with anyio.create_task_group() as tg:
                 for n in order:
                     tg.start_soon(run_one, n)
         finally:
+            sys.stdout, sys.stderr = saved_stdout, saved_stderr
             if needs_lifecycle:
                 self.config.renderer.stop()
+            _write_run_manifest(
+                logs_dir,
+                run_id=run_id,
+                started_at_utc=started_at_utc,
+                finished_at_utc=datetime.now(UTC),
+                targets=tuple(targets),
+                concurrency=self.config.concurrency,
+                result=result,
+            )
         return result
 
     @staticmethod
@@ -219,3 +267,83 @@ class Executor:
             await underlying(**kwargs)
         else:
             await anyio.to_thread.run_sync(lambda: t.func(**kwargs))
+
+
+def _utc_run_id() -> str:
+    """Filesystem-safe UTC run identifier — sortable lexically."""
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%S-%f")[:-3] + "Z"
+
+
+def _prune_old_runs(runs_root: Path, *, keep: int, current: Path) -> None:
+    """Retain the ``keep`` most recent run directories under ``runs_root``."""
+    if keep <= 0 or not runs_root.exists():
+        return
+    try:
+        entries = [p for p in runs_root.iterdir() if p.is_dir() and p != current]
+    except OSError:
+        return
+    # Directory names sort chronologically because the run-id format is
+    # `YYYYMMDDTHHMMSS-fff Z`. Newest last.
+    entries.sort(key=lambda p: p.name)
+    # `keep` is the budget *including* the current run, so we drop everything
+    # but the (keep - 1) newest historical runs.
+    drop_count = max(0, len(entries) - (keep - 1))
+    for old in entries[:drop_count]:
+        shutil.rmtree(old, ignore_errors=True)
+
+
+def _write_run_manifest(
+    run_dir: Path,
+    *,
+    run_id: str,
+    started_at_utc: datetime,
+    finished_at_utc: datetime,
+    targets: tuple[str, ...],
+    concurrency: int,
+    result: RunResult,
+) -> None:
+    """Emit ``run.json`` summarising the run.
+
+    Errors during manifest write are swallowed — the manifest is observability,
+    never on the critical path.
+    """
+    state_by_fqn: dict[str, str] = {}
+    for fqn in result.ran:
+        state_by_fqn[fqn] = "ran"
+    for fqn in result.cached:
+        state_by_fqn[fqn] = "cached"
+    for fqn in result.failed:
+        state_by_fqn[fqn] = "failed"
+    for fqn in result.skipped:
+        state_by_fqn[fqn] = "skipped"
+
+    tasks: list[dict[str, Any]] = []
+    for fqn, state in state_by_fqn.items():
+        tasks.append({
+            "fqn": fqn,
+            "state": state,
+            "duration": result.durations.get(fqn),
+            "log": result.log_paths.get(fqn),
+        })
+
+    manifest = {
+        "run_id": run_id,
+        "started_at_utc": started_at_utc.isoformat().replace("+00:00", "Z"),
+        "finished_at_utc": finished_at_utc.isoformat().replace("+00:00", "Z"),
+        "targets": list(targets),
+        "concurrency": concurrency,
+        "tasks": tasks,
+        "summary": {
+            "ran":     len(result.ran),
+            "cached":  len(result.cached),
+            "failed":  len(result.failed),
+            "skipped": len(result.skipped),
+        },
+    }
+    try:
+        (run_dir / "run.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass

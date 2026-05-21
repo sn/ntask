@@ -54,6 +54,10 @@ def _build_global_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-color", action="store_true")
     p.add_argument("--no-tui", action="store_true",
                    help="Disable the TUI; use the line-based renderer.")
+    p.add_argument("--log-dir", metavar="DIR",
+                   help="Per-run log directory (default <root>/.ntask/runs).")
+    p.add_argument("--max-runs", type=int, default=None, metavar="N",
+                   help="Retain only the N most recent run dirs (default 50).")
     p.add_argument("--version", action="version", version=f"ntask {__version__}")
     p.add_argument("-h", "--help", action="store_true")
     p.add_argument("task", nargs="?")
@@ -79,6 +83,8 @@ Flags:
   -q, --quiet             Suppress cache-hit lines
   --no-color              Disable color
   --no-tui                Disable the TUI; use the line-based renderer
+  --log-dir DIR           Per-run log directory (default <root>/.ntask/runs)
+  --max-runs N            Retain only the N most recent run dirs (default 50)
   --version, -h, --help
 
 Subcommands:
@@ -277,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
             concurrency=concurrency,
             offline=ns.offline,
             renderer=watch_renderer,
+            log_dir=Path(ns.log_dir) if ns.log_dir else None,
+            max_runs=ns.max_runs if ns.max_runs is not None else 50,
         )
 
         watch_task = t  # narrowed: Task (not None - checked above)
@@ -390,6 +398,8 @@ def main(argv: list[str] | None = None) -> int:
         keep_going=ns.keep_going,
         offline=ns.offline,
         renderer=renderer,
+        log_dir=Path(ns.log_dir) if ns.log_dir else None,
+        max_runs=ns.max_runs if ns.max_runs is not None else 50,
     )
     executor = Executor(reg, exec_cfg)
 
