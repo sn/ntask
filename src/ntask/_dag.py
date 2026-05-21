@@ -104,14 +104,19 @@ def _resolve_ref(ref: Any, reg: Registry) -> str | None:
 
 
 def build_graph(reg: Registry) -> Graph:
+    from ._task import _LazyDeps
+
     nodes = [t.fqn for t in reg.all()]
     edges: list[tuple[str, str]] = []
     for t in reg.all():
         for dep in t.deps:
-            src = _resolve_ref(dep, reg)
-            if src is None:
-                continue
-            edges.append((src, t.fqn))
+            # Expand lazy-deps callable (``deps=lambda: [a, b]``).
+            refs = dep.resolve() if isinstance(dep, _LazyDeps) else (dep,)
+            for ref in refs:
+                src = _resolve_ref(ref, reg)
+                if src is None:
+                    continue
+                edges.append((src, t.fqn))
         static = scan_static_depends(t.func)
         if isinstance(static, list):
             for name in static:

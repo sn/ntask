@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import wraps
 from typing import Any, overload
@@ -15,11 +15,39 @@ class CachedConfig:
     strict: bool = True
 
 
+class _LazyDeps:
+    """Marker for ``@task(deps=lambda: [a, b])`` — the resolver is invoked
+    once at graph-build time so the referenced tasks don't need to be
+    defined above the dependent.
+
+    Memoised so repeated graph builds don't repeatedly re-execute the
+    user's resolver.
+    """
+
+    __slots__ = ("_resolved", "_resolver")
+
+    def __init__(self, resolver: Callable[[], Iterable[Any]]) -> None:
+        self._resolver = resolver
+        self._resolved: tuple[Any, ...] | None = None
+
+    def resolve(self) -> tuple[Any, ...]:
+        if self._resolved is None:
+            value = self._resolver()
+            try:
+                self._resolved = tuple(value)
+            except TypeError as exc:
+                raise TypeError(
+                    "deps=<callable> must return an iterable of task "
+                    f"references; got {type(value).__name__}",
+                ) from exc
+        return self._resolved
+
+
 @dataclass(slots=True)
 class Task:
     fqn: str
     func: Callable[..., Any]
-    deps: tuple[Task | Callable[..., Any], ...]
+    deps: tuple[Any, ...]
     concurrency: int | None
     parallel: bool
     cached_config: CachedConfig | None
@@ -31,7 +59,9 @@ def task(func: Callable[..., Any], /) -> Callable[..., Any]: ...
 @overload
 def task(
     *,
-    deps: list[Callable[..., Any]] | None = ...,
+    deps: list[Callable[..., Any] | str]
+        | Callable[[], Iterable[Callable[..., Any] | str]]
+        | None = ...,
     concurrency: int | None = ...,
     parallel: bool = ...,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]: ...
@@ -41,13 +71,20 @@ def task(
     func: Callable[..., Any] | None = None,
     /,
     *,
-    deps: list[Callable[..., Any]] | None = None,
+    deps: list[Callable[..., Any] | str]
+        | Callable[[], Iterable[Callable[..., Any] | str]]
+        | None = None,
     concurrency: int | None = None,
     parallel: bool = True,
 ) -> Any:
     """Register a function as a task.
 
     Usable as ``@task`` or ``@task(deps=[...], concurrency=..., parallel=...)``.
+
+    ``deps`` accepts either an eager iterable of task refs (functions or
+    fully-qualified string names) or a zero-arg callable returning the same.
+    The callable form defers resolution until graph-build time, so forward
+    references work without the linter complaining about file order.
     """
     if concurrency is not None:
         import warnings
@@ -73,10 +110,18 @@ def task(
 
         wrapper.__ntask_task__ = fqn  # type: ignore[attr-defined]
 
+        if deps is None:
+            deps_tuple: tuple[Any, ...] = ()
+        elif callable(deps):
+            # Lazy form: defer resolution until graph build time.
+            deps_tuple = (_LazyDeps(deps),)
+        else:
+            deps_tuple = tuple(deps)
+
         default_registry().register(
             fqn,
             wrapper,
-            deps=tuple(deps or ()),
+            deps=deps_tuple,
             concurrency=concurrency,
             parallel=parallel,
             cached_config=existing_cfg,

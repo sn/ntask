@@ -8,6 +8,10 @@ this project uses semantic versioning.
 ## [Unreleased]
 
 ### Added
+- `@task(deps=...)` now accepts a zero-arg callable returning an iterable of
+  task refs — e.g. `@task(deps=lambda: [a, b])` — so dependent tasks can sit
+  above their deps in the source file without the linter complaining. The
+  resolver is invoked once at graph-build time and memoised.
 - Task failures now stream a traceback to stderr by default and append the
   full traceback to the per-task log file. New `--tb` global flag accepts
   `short` (default), `long`, `line`, or `none` — the renderer's one-line
