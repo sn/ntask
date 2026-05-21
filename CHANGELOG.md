@@ -13,6 +13,10 @@ this project uses semantic versioning.
   dependent, world-probing — where caching is the wrong default.
 
 ### Added
+- `ntask --list` now renders each task's CLI signature next to its name —
+  `<required: type>`, `[--name=default]`, `[--flag]` for bool default-False,
+  `[--no-flag]` for default-True. Long signatures are truncated at 40 chars
+  so the table stays readable.
 - `@task(deps=...)` now accepts a zero-arg callable returning an iterable of
   task refs — e.g. `@task(deps=lambda: [a, b])` — so dependent tasks can sit
   above their deps in the source file without the linter complaining. The
