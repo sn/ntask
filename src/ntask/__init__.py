@@ -5,7 +5,7 @@ from ._errors import CycleError, DiscoveryError, NtaskError, ShellError
 from ._shell import ShellResult, shell
 from ._task import cached, group, task
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 __all__ = [
     "CycleError",
     "DiscoveryError",

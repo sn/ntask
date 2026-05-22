@@ -102,3 +102,86 @@ def _append_to_log(path: Path, s: str) -> None:
             f.write(s)
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# logging.StreamHandler hijack
+#
+# Replacing sys.stdout / sys.stderr only redirects code that resolves those
+# attributes at write-time. The stdlib ``logging`` module captures the
+# stream object at handler-construction time (``StreamHandler()`` defaults
+# to ``sys.stderr`` at that instant), so a handler set up before ntask got
+# involved holds a reference to the original — bypassing the tee entirely.
+#
+# Textual's Linux driver writes to ``sys.__stderr__`` (the *immutable*
+# original) for the same reason, which means stdlib-logging output ends up
+# fighting Textual for the same physical stream and corrupting the live
+# DAG view.
+#
+# `hijack_logging_streams` walks every installed StreamHandler, and for any
+# whose ``.stream`` is the originals captured before the tee was installed,
+# rebinds it to the tee. `restore_logging_streams` puts the originals back.
+# ---------------------------------------------------------------------------
+
+def hijack_logging_streams(
+    *, tee_stdout: Any, tee_stderr: Any,
+) -> list[tuple[Any, Any]]:
+    """Redirect any logging.StreamHandler whose stream is the immutable
+    original sys.__stdout__ / sys.__stderr__ onto the given tees.
+
+    Returns a list of ``(handler, original_stream)`` for restoration. File-
+    backed handlers are skipped — they're already going to a file by design.
+    """
+    import logging
+    import sys
+
+    originals = {
+        id(sys.__stdout__): tee_stdout,
+        id(sys.__stderr__): tee_stderr,
+    }
+    saved: list[tuple[Any, Any]] = []
+    # Snapshot the logger set up front; user code may add loggers
+    # mid-run and we don't want to retroactively hijack those.
+    loggers: list[logging.Logger] = [logging.getLogger()]
+    for name in list(logging.Logger.manager.loggerDict.keys()):
+        item = logging.Logger.manager.loggerDict[name]
+        if isinstance(item, logging.Logger):
+            loggers.append(item)
+
+    for logger in loggers:
+        for handler in list(logger.handlers):
+            # FileHandler subclasses StreamHandler but its stream is a file
+            # already — don't redirect it onto our tee.
+            if not isinstance(handler, logging.StreamHandler):
+                continue
+            if isinstance(handler, logging.FileHandler):
+                continue
+            stream = getattr(handler, "stream", None)
+            replacement = originals.get(id(stream))
+            if replacement is None:
+                continue
+            try:
+                handler.acquire()
+                try:
+                    saved.append((handler, stream))
+                    handler.stream = replacement
+                finally:
+                    handler.release()
+            except Exception:  # noqa: S112 — hijack must never break a run
+                continue
+    return saved
+
+
+def restore_logging_streams(saved: list[tuple[Any, Any]]) -> None:
+    """Undo a previous `hijack_logging_streams` call. Safe to call with
+    an empty list; safe even if the user removed a handler in the interim.
+    """
+    for handler, original in saved:
+        try:
+            handler.acquire()
+            try:
+                handler.stream = original
+            finally:
+                handler.release()
+        except Exception:  # noqa: S112 — restore must never break a run
+            continue

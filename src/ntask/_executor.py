@@ -18,7 +18,7 @@ from ._cache.diff import MissReport, diff_cache_state
 from ._config import load_project_config
 from ._coordinator import _ParallelCoordinator
 from ._dag import build_graph, toposort
-from ._logio import _LogTee
+from ._logio import _LogTee, hijack_logging_streams, restore_logging_streams
 from ._registry import Registry
 from ._remote import RemoteBackend, make_backend
 from ._shell import _current_line_prefix, _current_log_file, _current_silent_capture
@@ -260,11 +260,20 @@ class Executor:
         saved_stdout, saved_stderr = sys.stdout, sys.stderr
         sys.stdout = _LogTee(saved_stdout)
         sys.stderr = _LogTee(saved_stderr)
+        # Rebind any logging.StreamHandler that captured the immutable
+        # original sys.__stdout__/__stderr__ onto our tees. This is what
+        # catches structured loggers (stdlib logging / structlog with the
+        # stdlib handler) that would otherwise bypass the tee and fight
+        # Textual for the screen.
+        hijacked_handlers = hijack_logging_streams(
+            tee_stdout=sys.stdout, tee_stderr=sys.stderr,
+        )
         try:
             async with anyio.create_task_group() as tg:
                 for n in order:
                     tg.start_soon(run_one, n)
         finally:
+            restore_logging_streams(hijacked_handlers)
             sys.stdout, sys.stderr = saved_stdout, saved_stderr
             if needs_lifecycle:
                 self.config.renderer.stop()

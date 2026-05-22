@@ -256,3 +256,98 @@ def test_tui_app_quit_bindings_include_q_and_escape():
     assert "q" in keys
     assert "escape" in keys
     assert "ctrl+c" in keys
+
+
+async def test_tui_log_pane_tails_running_task_log_file(tmp_path: Path):
+    """When a task transitions to 'running' the log pane should switch
+    to tailing that task's log file, and surface bytes appended after
+    the transition."""
+    from textual.widgets import RichLog
+
+    from ntask._dag import Graph
+    from ntask._render.tui import _DAGApp
+
+    g = Graph(nodes=["scenario_a"], edges=[])
+    app = _DAGApp(logs_dir=tmp_path)
+    log_file = tmp_path / "scenario_a.log"
+    log_file.write_text("", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.build_tree(g)
+        # Begin running — pane should switch to this task.
+        app.update_state("scenario_a", "running")
+        await pilot.pause()
+        # Append a fake log line, as the executor would.
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write('{"service": "tender-api", "event": "kickoff"}\n')
+        # Give the polling interval a couple of ticks to pick it up.
+        await pilot.pause(0.4)
+        rendered = "\n".join(
+            seg.text for line in app.query_one("#task-log", RichLog).lines
+            for seg in line._segments
+        )
+        assert "tender-api" in rendered
+        assert "── scenario_a ──" in rendered
+
+
+async def test_tui_log_pane_freezes_when_task_completes(tmp_path: Path):
+    """After ok/cached/failed the pane should hold the final content,
+    not blank out — the user may still be reading it."""
+    from textual.widgets import RichLog
+
+    from ntask._dag import Graph
+    from ntask._render.tui import _DAGApp
+
+    g = Graph(nodes=["scenario_a"], edges=[])
+    app = _DAGApp(logs_dir=tmp_path)
+    log_file = tmp_path / "scenario_a.log"
+    log_file.write_text("first-line\n", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.build_tree(g)
+        app.update_state("scenario_a", "running")
+        await pilot.pause(0.4)
+        app.update_state("scenario_a", "ok", duration=0.2)
+        await pilot.pause(0.4)
+        rendered = "\n".join(
+            seg.text for line in app.query_one("#task-log", RichLog).lines
+            for seg in line._segments
+        )
+        # Content remains visible after completion.
+        assert "first-line" in rendered
+        # And the tail state was released.
+        assert app._tailing_fqn is None
+
+
+async def test_tui_log_pane_switches_between_tasks(tmp_path: Path):
+    """When a second task starts running, the pane should clear and
+    rebind to its log file."""
+    from textual.widgets import RichLog
+
+    from ntask._dag import Graph
+    from ntask._render.tui import _DAGApp
+
+    g = Graph(nodes=["a", "b"], edges=[])
+    app = _DAGApp(logs_dir=tmp_path)
+    (tmp_path / "a.log").write_text("output-from-a\n", encoding="utf-8")
+    (tmp_path / "b.log").write_text("output-from-b\n", encoding="utf-8")
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.build_tree(g)
+        app.update_state("a", "running")
+        await pilot.pause(0.4)
+        app.update_state("a", "ok", duration=0.1)
+        await pilot.pause(0.2)
+        app.update_state("b", "running")
+        await pilot.pause(0.4)
+        rendered = "\n".join(
+            seg.text for line in app.query_one("#task-log", RichLog).lines
+            for seg in line._segments
+        )
+        # The pane now belongs to b; a's content was cleared.
+        assert "output-from-b" in rendered
+        assert "── b ──" in rendered
+        assert "output-from-a" not in rendered

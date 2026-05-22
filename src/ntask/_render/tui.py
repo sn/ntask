@@ -12,11 +12,14 @@ from typing import Any, ClassVar
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
-from textual.widgets import Static, Tree
+from textual.widgets import RichLog, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from .._cache.diff import MissReport
 from .._dag import Graph, toposort
+
+_LOG_TAIL_POLL_INTERVAL = 0.15
+_LOG_TAIL_PLACEHOLDER = "(no task running — output will appear here)"
 
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
@@ -36,7 +39,13 @@ class _DAGApp(App[None]):
 
     CSS = """
     Screen { background: $surface; }
-    #dag-tree { margin: 1 2; }
+    #dag-tree { margin: 1 2 0 2; height: 50%; }
+    #task-log {
+        margin: 0 2 0 2;
+        height: 1fr;
+        border-top: solid $accent;
+        background: $surface-lighten-1;
+    }
     #footer { dock: bottom; height: 1; padding: 0 2; color: $text-muted; }
     """
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -48,7 +57,6 @@ class _DAGApp(App[None]):
 
     def __init__(self, logs_dir: Path | None = None) -> None:
         super().__init__()
-        # Stored for future log-pane integration; not yet read in 0.6.0.
         self._logs_dir: Path | None = logs_dir
         self._task_nodes: dict[str, TreeNode[Any]] = {}
         self._states: dict[str, str] = {}
@@ -56,13 +64,28 @@ class _DAGApp(App[None]):
         self._summary_text: str = "starting..."
         self._spinner_frame = 0
         self._mount_ready = threading.Event()
+        # Log-pane tailing state.
+        self._tailing_fqn: str | None = None
+        self._tail_path: Path | None = None
+        self._tail_offset: int = 0
 
     def compose(self) -> ComposeResult:
         yield Tree("ntask", id="dag-tree")
+        yield RichLog(
+            id="task-log",
+            max_lines=2000,
+            highlight=False,
+            markup=False,
+            wrap=True,
+        )
         yield Static(self._summary_text, id="footer")
 
     def on_mount(self) -> None:
         self.set_interval(0.1, self._advance_spinner)
+        self.set_interval(_LOG_TAIL_POLL_INTERVAL, self._tail_current_log)
+        # Placeholder so users can see what the pane is for before any task
+        # has started writing output.
+        self.query_one("#task-log", RichLog).write(_LOG_TAIL_PLACEHOLDER)
         self._mount_ready.set()
 
     def build_tree(self, graph: Graph) -> None:
@@ -90,6 +113,52 @@ class _DAGApp(App[None]):
         node = self._task_nodes.get(fqn)
         if node is not None:
             node.set_label(self._label(fqn))
+        # When a task starts running, switch the log pane to tail its file.
+        # When it finishes, freeze on the last content — don't blank the
+        # pane, since the user may still be reading it.
+        if state == "running":
+            self._begin_tail(fqn)
+        elif fqn == self._tailing_fqn and state in {"ok", "failed", "cached", "cached-remote"}:
+            self._end_tail()
+
+    def _begin_tail(self, fqn: str) -> None:
+        if self._logs_dir is None:
+            return
+        self._tailing_fqn = fqn
+        self._tail_path = self._logs_dir / f"{fqn}.log"
+        self._tail_offset = 0
+        log = self.query_one("#task-log", RichLog)
+        log.clear()
+        log.write(Text(f"── {fqn} ──", style="bold cyan"))
+
+    def _end_tail(self) -> None:
+        # Drain any remaining bytes before freezing the pane.
+        self._tail_current_log()
+        self._tailing_fqn = None
+
+    def _tail_current_log(self) -> None:
+        path = self._tail_path
+        if path is None or self._tailing_fqn is None:
+            return
+        try:
+            if not path.exists():
+                return
+            size = path.stat().st_size
+            if size <= self._tail_offset:
+                return
+            with path.open("rb") as f:
+                f.seek(self._tail_offset)
+                new_bytes = f.read(size - self._tail_offset)
+                self._tail_offset = size
+        except OSError:
+            return
+        if not new_bytes:
+            return
+        text = new_bytes.decode("utf-8", errors="replace")
+        log = self.query_one("#task-log", RichLog)
+        # RichLog.write splits on newlines for us; trailing newline is
+        # ignored so we don't emit a phantom blank line.
+        log.write(text.rstrip("\n"))
 
     def update_summary(self, text: str) -> None:
         self._summary_text = text
@@ -143,6 +212,8 @@ class TUIRenderer:
         self._logs_dir = logs_dir
         if not self._app._mount_ready.wait(timeout=5.0):
             raise RuntimeError("TUI app failed to become ready within 5s")
+        # The log pane needs to know where to find per-task log files.
+        self._app._logs_dir = logs_dir
         self._app.call_from_thread(self._app.build_tree, graph)
 
     def stop(self) -> None:

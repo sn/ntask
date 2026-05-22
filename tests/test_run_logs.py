@@ -197,6 +197,125 @@ def test_logtee_non_silent_mode_still_writes_to_underlying(tmp_path: Path):
     assert "visible-on-terminal" in log_path.read_text(encoding="utf-8")
 
 
+def test_hijack_redirects_stderr_logging_handler(tmp_path: Path):
+    """Regression: a stdlib logging.StreamHandler whose .stream was bound
+    to sys.__stderr__ at handler-construction time bypasses our tee in
+    TUI mode and corrupts Textual's surface. The hijack must rebind it.
+    """
+    import logging
+    import sys as _sys
+    from io import StringIO
+
+    from ntask._logio import (
+        _LogTee,
+        hijack_logging_streams,
+        restore_logging_streams,
+    )
+    from ntask._shell import _current_log_file, _current_silent_capture
+
+    # Simulate an app that set up logging *before* ntask got involved:
+    # the handler captures sys.__stderr__ at construction time.
+    logger = logging.getLogger("ntask-test-app")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = logging.StreamHandler(_sys.__stderr__)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    try:
+        # Build tees and hijack as the executor would.
+        tee_stdout = _LogTee(_sys.stdout)
+        tee_stderr = _LogTee(_sys.stderr)
+        hijacked = hijack_logging_streams(
+            tee_stdout=tee_stdout, tee_stderr=tee_stderr,
+        )
+        try:
+            assert any(h is handler for h, _ in hijacked), (
+                "hijack should have rebound the stderr StreamHandler"
+            )
+            assert handler.stream is tee_stderr
+
+            # Emit a log under silent-capture (TUI-equivalent) — it must
+            # NOT reach the real stderr.
+            log_path = tmp_path / "task.log"
+            log_token = _current_log_file.set(log_path)
+            silent_token = _current_silent_capture.set(True)
+            real_stderr = _sys.__stderr__
+            buf = StringIO()
+            _sys.__stderr__ = buf  # type: ignore[misc] — testing isolation only
+            try:
+                logger.info('{"service": "tender-api", "event": "boom"}')
+            finally:
+                _sys.__stderr__ = real_stderr  # type: ignore[misc]
+                _current_silent_capture.reset(silent_token)
+                _current_log_file.reset(log_token)
+            # The captured "real" stderr should be untouched (handler now
+            # writes via the tee which is silent under TUI mode).
+            assert buf.getvalue() == ""
+            # The per-task log file received the line.
+            assert "tender-api" in log_path.read_text(encoding="utf-8")
+        finally:
+            restore_logging_streams(hijacked)
+        # Restoration must put the original stream back exactly.
+        assert handler.stream is _sys.__stderr__
+    finally:
+        logger.removeHandler(handler)
+
+
+def test_hijack_leaves_file_handlers_alone():
+    """FileHandler subclasses StreamHandler but writes to a file — must not
+    be touched by the hijack."""
+    import logging
+
+    from ntask._logio import hijack_logging_streams, restore_logging_streams
+
+    logger = logging.getLogger("ntask-test-filehandler")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".log", delete=False) as tmp:
+        path = tmp.name
+    handler = logging.FileHandler(path)
+    logger.addHandler(handler)
+    try:
+        hijacked = hijack_logging_streams(
+            tee_stdout=object(), tee_stderr=object(),
+        )
+        try:
+            assert all(h is not handler for h, _ in hijacked)
+        finally:
+            restore_logging_streams(hijacked)
+    finally:
+        logger.removeHandler(handler)
+        handler.close()
+
+
+def test_hijack_ignores_unrelated_streams():
+    """A StreamHandler bound to some custom stream (a StringIO, a file
+    object the app opened itself) must not be rebound."""
+    import logging
+    from io import StringIO
+
+    from ntask._logio import hijack_logging_streams, restore_logging_streams
+
+    custom = StringIO()
+    logger = logging.getLogger("ntask-test-custom-stream")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    handler = logging.StreamHandler(custom)
+    logger.addHandler(handler)
+    try:
+        hijacked = hijack_logging_streams(
+            tee_stdout=object(), tee_stderr=object(),
+        )
+        try:
+            assert hijacked == []
+            assert handler.stream is custom
+        finally:
+            restore_logging_streams(hijacked)
+    finally:
+        logger.removeHandler(handler)
+
+
 async def test_executor_silent_capture_under_lifecycle_renderer(tmp_path: Path):
     """End-to-end: when a lifecycle (TUI-style) renderer is active, a
     task that writes to stderr must not reach the captured stderr stream,

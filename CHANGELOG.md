@@ -7,7 +7,22 @@ this project uses semantic versioning.
 
 ## [Unreleased]
 
+### Added
+- TUI now has a live log pane docked below the DAG tree that tails the
+  currently-running task's `.log` file. When a task moves to `running`
+  the pane clears and rebinds; on completion it freezes on the final
+  content so you can still read it. Polls every ~150ms.
+
 ### Fixed
+- Structured loggers (stdlib `logging` and `structlog` configured with
+  the stdlib handler) were writing directly to the original
+  `sys.__stderr__` they captured at app-import time, fighting Textual
+  for the same stream and spilling JSON across the live DAG view. The
+  executor now walks all `logging.StreamHandler` instances at run-start
+  and rebinds those whose `.stream` is the captured-original
+  stdout/stderr to point at our `_LogTee`. `FileHandler` instances and
+  handlers bound to custom streams are left alone. Originals are
+  restored on run-end.
 - `_LogTee` (the `sys.stdout` / `sys.stderr` proxy installed by the executor
   to capture per-task output) was writing to the underlying stream even
   under the TUI. Textual owns stdout but not stderr, so library code that
