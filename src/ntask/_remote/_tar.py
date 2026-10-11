@@ -42,7 +42,11 @@ def extract_tar(data: bytes, dest_dir: Path) -> None:
     try:
         staging.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            tar.extractall(staging)  # noqa: S202
+            # `filter="data"` (PEP 706) rejects entries that would write
+            # outside the destination, set unsafe permissions, or include
+            # absolute paths. Remote backends fetch attacker-influenceable
+            # bytes, so this is load-bearing — not just future-proofing.
+            tar.extractall(staging, filter="data")
         # Move contents of staging into dest_dir
         for p in staging.iterdir():
             target = dest_dir / p.name

@@ -3,24 +3,26 @@ from __future__ import annotations
 import ast
 import inspect
 from collections.abc import Callable
-from contextvars import ContextVar
 from typing import Any, Literal
-
-_current_depends_handler: ContextVar[Callable[[tuple[Any, ...]], Any] | None] = ContextVar(
-    "_current_depends_handler", default=None
-)
 
 
 def depends(*tasks: Any) -> None:
-    """Runtime-dynamic dependency sentinel.
+    """Declare a dependency on ``tasks`` from inside a task body.
 
-    Inside a running task, blocks until ``tasks`` are complete. Outside a task,
-    it's a no-op (useful during import or testing).
+    This is a *static declaration*, not a runtime block. ``scan_depends``
+    AST-walks task bodies at graph-build time and turns each ``depends(...)``
+    call into an edge in the DAG, so referenced tasks are guaranteed to have
+    completed before this task runs (via topological ordering).
+
+    At runtime the call itself is a no-op — by the time control reaches it,
+    the dependencies have already executed. Calls outside a task body are
+    also a no-op (safe to use during import or in tests).
+
+    Only plain or dotted names are understood (``depends(a, mod.b)``).
+    Anything computed at runtime (``depends(*xs)``, ``depends(pick())``)
+    can't be seen by the scanner and produces a warning at graph-build time;
+    use ``@task(deps=...)`` for those instead.
     """
-    handler = _current_depends_handler.get()
-    if handler is None:
-        return
-    handler(tasks)
 
 
 class _DependsVisitor(ast.NodeVisitor):
@@ -82,11 +84,13 @@ class _DependsVisitor(ast.NodeVisitor):
         pass
 
 
-def scan_static_depends(func: Callable[..., Any]) -> list[str] | Literal["dynamic"]:
-    """Return the names of tasks referenced by static ``depends(a, b)`` calls in ``func``.
+def scan_depends(func: Callable[..., Any]) -> tuple[list[str], bool]:
+    """Scan ``func``'s direct body for ``depends(...)`` calls.
 
-    If any ``depends(...)`` call uses starred/unpacked/non-Name arguments,
-    returns the string ``"dynamic"``.
+    Returns ``(names, has_dynamic)``: ``names`` are the plain/dotted names
+    passed as arguments, and ``has_dynamic`` is True if any argument was
+    something else (starred, a call, a literal...). Static names are returned
+    even when the same call also has dynamic arguments.
 
     Only ``depends`` calls in the function's direct body are considered; calls
     inside nested functions, lambdas, or class bodies are ignored.
@@ -94,12 +98,12 @@ def scan_static_depends(func: Callable[..., Any]) -> list[str] | Literal["dynami
     try:
         source = inspect.getsource(func)
     except (OSError, TypeError):
-        return []
+        return [], False
     source = inspect.cleandoc("\n" + source)
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        return []
+        return [], False
 
     # Locate the top-level FunctionDef / AsyncFunctionDef in the parsed module.
     top_fn: ast.FunctionDef | ast.AsyncFunctionDef | None = None
@@ -108,12 +112,45 @@ def scan_static_depends(func: Callable[..., Any]) -> list[str] | Literal["dynami
             top_fn = stmt
             break
     if top_fn is None:
-        return []
+        return [], False
 
     visitor = _DependsVisitor()
     for stmt in top_fn.body:
         visitor.visit(stmt)
+    return visitor.names, visitor.dynamic
 
-    if visitor.dynamic:
+
+def scan_static_depends(func: Callable[..., Any]) -> list[str] | Literal["dynamic"]:
+    """Return the names of tasks referenced by static ``depends(a, b)`` calls in ``func``.
+
+    If any ``depends(...)`` call uses starred/unpacked/non-Name arguments,
+    returns the string ``"dynamic"``. See ``scan_depends`` for a variant that
+    keeps the static names alongside the dynamic flag.
+    """
+    names, dynamic = scan_depends(func)
+    if dynamic:
         return "dynamic"
-    return visitor.names
+    return names
+
+
+def resolve_depends_name(func: Callable[..., Any], name: str) -> str | None:
+    """Resolve a name from a ``depends(...)`` call to the fqn of the task it refers to.
+
+    Looks ``name`` (possibly dotted, e.g. ``lint.ruff`` or ``mod.build``) up in
+    the variables ``func`` actually closes over / references as globals, so an
+    aliased import or a task defined in an enclosing scope resolves to its real
+    fqn. Returns None if the name doesn't lead to a task.
+    """
+    head, *rest = name.split(".")
+    try:
+        cv = inspect.getclosurevars(inspect.unwrap(func))
+    except (TypeError, ValueError):
+        return None
+    scopes = (cv.nonlocals, cv.globals, cv.builtins)
+    obj: Any = next((scope[head] for scope in scopes if head in scope), None)
+    for attr in rest:
+        if obj is None:
+            return None
+        obj = getattr(obj, attr, None)
+    fqn = getattr(obj, "__ntask_task__", None)
+    return fqn if isinstance(fqn, str) else None

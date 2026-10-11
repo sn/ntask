@@ -71,3 +71,62 @@ def test_depends_at_runtime_is_noop_outside_executor():
     # depends() called outside the executor context must not crash.
     def helper(): pass
     depends(helper)  # should not raise
+
+
+def _edges():
+    from ntask._dag import build_graph
+    return build_graph(default_registry()).edges
+
+
+def test_mixed_static_and_dynamic_depends_keeps_static_edge():
+    @task
+    def a(): pass
+
+    @task
+    def c():
+        extra = []
+        depends(a, *extra)
+
+    with pytest.warns(UserWarning, match="can't be resolved statically"):
+        edges = _edges()
+    assert ("a", "c") in edges
+
+
+def test_aliased_depends_resolves_to_real_fqn():
+    @task
+    def build(): pass
+
+    alias = build
+
+    @task
+    def deploy():
+        depends(alias)
+
+    assert ("build", "deploy") in _edges()
+
+
+def test_grouped_task_depends_resolves_to_group_fqn():
+    from ntask import group
+
+    @group("lint")
+    class Lint:
+        @task
+        def ruff(): pass
+
+    @task
+    def check():
+        depends(Lint.ruff)
+
+    assert ("lint.ruff", "check") in _edges()
+
+
+def test_unknown_depends_name_warns():
+    def not_a_task(): pass
+
+    @task
+    def c():
+        depends(not_a_task)
+
+    with pytest.warns(UserWarning, match="does not refer to a known task"):
+        edges = _edges()
+    assert edges == []

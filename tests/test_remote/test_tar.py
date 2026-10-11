@@ -58,3 +58,22 @@ def test_tar_ignores_directories_only_includes_files(tmp_path: Path):
     dest = tmp_path / "d"
     extract_tar(data, dest)
     assert (dest / "a" / "f.txt").read_bytes() == b"x"
+
+
+def test_extract_rejects_path_traversal(tmp_path: Path):
+    import io
+    import tarfile
+
+    import pytest
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        payload = b"pwned"
+        info = tarfile.TarInfo("../escaped.txt")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+
+    dest = tmp_path / "dest"
+    with pytest.raises(tarfile.FilterError):
+        extract_tar(buf.getvalue(), dest)
+    assert not (tmp_path / "escaped.txt").exists()

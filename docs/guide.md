@@ -70,7 +70,7 @@ pip install ntask
 
 Installs the `ntask` console script and the `ntask` Python package.
 
-**Requirements:** Python 3.11 or newer. Tested on 3.11, 3.12, and 3.13.
+**Requirements:** Python 3.11.4 or newer. Tested on 3.11, 3.12, and 3.13.
 
 ### Optional extras
 
@@ -264,7 +264,7 @@ def check():
 
 Two roles:
 
-1. **Static (import time):** an AST visitor reads `depends(name)` calls and adds DAG edges before any task runs. Bare names that match registered fqns are picked up; dotted attributes and string fqns are not.
+1. **Static (graph-build time):** an AST visitor reads `depends(name)` calls and adds DAG edges before any task runs. Bare and dotted names (`depends(build, Api.lint)`) are resolved to whatever task they refer to in the function's scope, so aliased imports and grouped tasks work. Anything computed at runtime (`depends(*xs)`, string fqns, function calls) can't be resolved statically: it's ignored for ordering and ntask emits a warning. Names that don't refer to a task also produce a warning.
 2. **Runtime:** when execution reaches the call, `depends()` is a no-op (the static analysis already wired things up).
 
 For cross-group references, prefer `@task(deps=[Api.lint, "web.test"])` over `depends()`.
@@ -976,7 +976,7 @@ The registry is a module-level dict from fqn to `Task`. Registering the same fqn
 `build_graph(reg)` collects two kinds of edges:
 
 1. **Declared deps** (`@task(deps=[a, b])`): `_resolve_ref` follows function-object identity, the `__ntask_task__` marker, or string fqns.
-2. **Static `depends()` calls**: `scan_static_depends(func)` parses the function source, walks the body (stopping at nested function/class scopes), and collects bare `Name` arguments. Dotted attributes are recorded as dotted strings; string literals are flagged dynamic and contribute nothing.
+2. **Static `depends()` calls**: `scan_depends(func)` parses the function source, walks the body (stopping at nested function/class scopes), and collects bare `Name` and dotted-attribute arguments, plus a flag for any argument it can't read statically. `resolve_depends_name` looks each name up in the function's closure/globals and follows the `__ntask_task__` marker to the real fqn (falling back to treating the name as an fqn). Unresolvable names and dynamic arguments add no edge and emit a `UserWarning`.
 
 `toposort(g)` runs Kahn's algorithm (BFS from zero-indegree). If the result is shorter than the node count, a cycle exists; `_find_cycle` runs DFS over the remaining nodes and reports it via `CycleError`.
 

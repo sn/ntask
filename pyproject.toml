@@ -9,7 +9,7 @@ description = "A Python-native task runner with content-hash caching and DAG exe
 authors = [{name = "Sean Nieuwoudt", email = "sean@underwulf.com"}]
 license = {text = "BSD-3-Clause"}
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11.4"
 keywords = ["task-runner", "build-system", "make", "just", "ci"]
 classifiers = [
     "Development Status :: 4 - Beta",

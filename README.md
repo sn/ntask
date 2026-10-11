@@ -200,7 +200,7 @@ Cache miss messages name the specific file or env change that caused the invalid
 - [Migrating from Make / just / Invoke / Poe](docs/migration.md)
 - [Short API reference](docs/reference.md)
 
-Requirements: Python 3.11 or newer. BSD-3-Clause.
+Requirements: Python 3.11.4 or newer. BSD-3-Clause.
 
 ## License
 

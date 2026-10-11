@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import warnings
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any
 
-from ._depends import scan_static_depends
+from ._depends import resolve_depends_name, scan_depends
 from ._errors import CycleError
 from ._registry import Registry
 
@@ -117,9 +118,28 @@ def build_graph(reg: Registry) -> Graph:
                 if src is None:
                     continue
                 edges.append((src, t.fqn))
-        static = scan_static_depends(t.func)
-        if isinstance(static, list):
-            for name in static:
-                if reg.try_get(name):
-                    edges.append((name, t.fqn))
+        names, dynamic = scan_depends(t.func)
+        for name in names:
+            # Prefer what the name actually refers to in the task's scope (handles
+            # aliased imports and grouped tasks); fall back to treating it as an fqn.
+            src = resolve_depends_name(t.func, name)
+            if src is None and reg.try_get(name):
+                src = name
+            if src is None:
+                warnings.warn(
+                    f"task {t.fqn!r}: depends({name}) does not refer to a known task; "
+                    f"no ordering edge was added.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                continue
+            edges.append((src, t.fqn))
+        if dynamic:
+            warnings.warn(
+                f"task {t.fqn!r}: depends(...) has arguments that can't be resolved "
+                f"statically (e.g. *args or a function call); they are ignored when "
+                f"ordering tasks. Use @task(deps=...) for computed dependencies.",
+                UserWarning,
+                stacklevel=2,
+            )
     return Graph(nodes=nodes, edges=edges)

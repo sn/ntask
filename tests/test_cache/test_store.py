@@ -108,3 +108,32 @@ def test_store_latest_returns_most_recent_entry(tmp_path: Path):
     latest = store.latest("build")
     assert latest is not None
     assert latest.key == "second"
+
+
+def test_store_put_leaves_no_temp_files(tmp_path: Path):
+    store = CacheStore(root=tmp_path / ".ntask")
+    store.put("build", CacheEntry(key="k", outputs_hash=None, duration=0.1,
+                                  completed_at=0.0))
+    files = [p.name for p in (store.cache_dir / "build").iterdir()]
+    assert files == ["k.json"]
+
+
+def test_store_corrupt_entry_is_a_miss(tmp_path: Path):
+    store = CacheStore(root=tmp_path / ".ntask")
+    p = store.cache_dir / "build" / "k.json"
+    p.parent.mkdir(parents=True)
+    p.write_text('{"key": "k", "outputs_ha')  # truncated mid-write
+    assert store.get("build", "k") is None
+    assert store.latest("build") is None
+
+
+def test_store_latest_skips_corrupt_newest(tmp_path: Path):
+    import os
+
+    store = CacheStore(root=tmp_path / ".ntask")
+    good = CacheEntry(key="good", outputs_hash=None, duration=0.1, completed_at=0.0)
+    store.put("build", good)
+    bad = store.cache_dir / "build" / "bad.json"
+    bad.write_text("not json")
+    os.utime(bad, (2_000_000_000, 2_000_000_000))  # make it the newest
+    assert store.latest("build") == good

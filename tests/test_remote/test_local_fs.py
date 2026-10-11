@@ -54,3 +54,10 @@ def test_local_fs_missing_output_raises(tmp_path: Path):
     backend = LocalFSBackend(root=tmp_path / "remote")
     with pytest.raises(FileNotFoundError):
         backend.get_output("nonexistent", tmp_path / "dest")
+
+
+def test_local_fs_put_entry_leaves_no_temp_files(tmp_path: Path):
+    b = LocalFSBackend(root=tmp_path)
+    b.put_entry("build", "k", {"key": "k"})
+    p = b._entry_path("build", "k")
+    assert [x.name for x in p.parent.iterdir()] == [p.name]

@@ -5,6 +5,7 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .._fsutil import atomic_write_text
 from .key import CacheBreakdown, InputRecord
 
 
@@ -68,6 +69,14 @@ class CacheEntry:
         )
 
 
+def _load_entry(p: Path) -> CacheEntry | None:
+    """Parse a cache entry file, treating a corrupt or truncated one as a miss."""
+    try:
+        return CacheEntry.from_dict(json.loads(p.read_text()))
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
 class CacheStore:
     """On-disk cache entry store under ``<root>/cache/<fqn>/<key>.json``."""
 
@@ -85,13 +94,15 @@ class CacheStore:
     def put(self, fqn: str, entry: CacheEntry) -> None:
         p = self._path(fqn, entry.key)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(entry.to_dict(), indent=2))
+        # Write-then-rename so a crash mid-write can't leave a half-written
+        # JSON file behind for `get()` / `latest()` to trip over.
+        atomic_write_text(p, json.dumps(entry.to_dict(), indent=2))
 
     def get(self, fqn: str, key: str) -> CacheEntry | None:
         p = self._path(fqn, key)
         if not p.is_file():
             return None
-        return CacheEntry.from_dict(json.loads(p.read_text()))
+        return _load_entry(p)
 
     def has(self, fqn: str, key: str) -> bool:
         return self._path(fqn, key).is_file()
@@ -104,8 +115,12 @@ class CacheStore:
         entries = list(d.glob("*.json"))
         if not entries:
             return None
-        newest = max(entries, key=lambda p: p.stat().st_mtime)
-        return CacheEntry.from_dict(json.loads(newest.read_text()))
+        # Newest first; skip past any entry that turns out to be unreadable.
+        for p in sorted(entries, key=lambda p: p.stat().st_mtime, reverse=True):
+            entry = _load_entry(p)
+            if entry is not None:
+                return entry
+        return None
 
     def clear(self) -> None:
         if self._cache_dir.exists():

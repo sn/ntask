@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .._fsutil import atomic_write_text
 from ._tar import extract_tar, tar_directory
 
 
@@ -31,7 +32,7 @@ class LocalFSBackend:
     def put_entry(self, fqn: str, key: str, entry: dict[str, object]) -> None:
         p = self._entry_path(fqn, key)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(entry, indent=2))
+        atomic_write_text(p, json.dumps(entry, indent=2))
 
     def has_output(self, outputs_hash: str) -> bool:
         return self._output_path(outputs_hash).is_file()
