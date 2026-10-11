@@ -81,13 +81,13 @@ Save it as `tasks.py` at your project root. No other configuration needed.
 ntask --list                        # show every task with its docstring
 ntask check                         # runs lint, typecheck, test in order
 ntask check                         # second time: all three are cache hits
-ntask check -j                      # run them in parallel across all cores
+ntask -j check                      # run them in parallel across all cores
 ntask test                          # run just the test task
 ntask --why test                    # explain the last cache decision for test
 ntask --graph check                 # draw the DAG as ASCII
 ```
 
-The first run executes everything. The second `ntask check` looks at the inputs glob, hashes every matching file with xxh3_128, compares to the prior cache key, and short-circuits each task that hasn't changed.
+The first run executes everything. The second `ntask check` looks at the inputs glob, hashes every matching file with xxh3_128, compares to the prior cache key, and skips each task that hasn't changed.
 
 Edit one file under `src/`, run `ntask check` again, and watch only the tasks whose inputs (or transitive upstream inputs) changed actually rerun.
 
@@ -103,7 +103,7 @@ Watch mode requires the target to be `@cached` because the inputs glob is what d
 
 ## Bonus: type hints become CLI flags
 
-Add a parameter to a task and ntask wires it up automatically:
+Add a parameter to a task and ntask wires it up as a flag:
 
 ```python
 @task
@@ -129,4 +129,4 @@ Booleans become `--flag`/`--no-flag`. Strings become `--name VALUE`. `Literal[..
 - A live rerun loop with `watch`.
 - A diagnostic flag (`--why`) that names the specific file or env var that invalidated the cache.
 
-Read [`caching.md`](caching.md) next for the full cache contract, or jump to [`guide.md`](guide.md) for the comprehensive reference.
+Read [`caching.md`](caching.md) next for the full cache contract, or jump to [`guide.md`](guide.md) for the full guide.

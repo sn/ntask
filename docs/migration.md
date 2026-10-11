@@ -41,11 +41,11 @@ def check():
     depends(lint, test)
 ```
 
-What you gain: content-hash caching, real parallelism (`ntask check -j`), typed CLI flags from the function signature, watch mode, and a live TUI display.
+What you gain: content-hash caching, real parallelism (`ntask -j check`), typed CLI flags from the function signature, watch mode, and a live TUI display.
 
 What you lose: nothing. Tasks still call shell commands. The function body is the recipe.
 
-Mtime-based "is this newer than that?" checks disappear because ntask doesn't trust mtime. Content-hash decides instead.
+Mtime-based "is this newer than that?" checks disappear because ntask doesn't trust mtime. Content hashes decide instead.
 
 ## From just
 
@@ -174,7 +174,7 @@ def test():
     shell("pytest")
 ```
 
-doit's task-as-dict format is powerful but verbose. ntask uses Python decorators on plain functions; type hints become CLI flags; `inputs=[...]` does what `file_dep` did with content-hash caching instead of mtime.
+doit's task-as-dict format is powerful but verbose. ntask uses Python decorators on plain functions, and type hints become CLI flags. `inputs=[...]` does what `file_dep` did, with content-hash caching instead of mtime.
 
 ## Migration checklist
 
@@ -184,9 +184,9 @@ For any source format:
 2. Rewrite each target as a `@task`-decorated function. Function name = task name.
 3. Replace shell-out calls with `shell("...")`.
 4. Translate dependencies:
-   - For static deps: `@task(deps=[other])`.
-   - For runtime deps inside a task body: `depends(other)` (works in the same scope).
-5. Add `@cached(inputs=[...])` to anything you don't want to re-run unnecessarily.
+   - In the decorator: `@task(deps=[other])`.
+   - Or inside the task body: `depends(other)`. This is a static declaration that ntask scans at graph-build time, not a runtime call.
+5. Add `@cached(inputs=[...])` to anything you don't want to re-run when its inputs haven't changed.
 6. Run `ntask --list`. Then `ntask --graph <target>`. Then start running tasks.
 
 If a task previously took mode/option flags, add typed parameters:

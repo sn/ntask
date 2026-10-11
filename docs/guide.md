@@ -1,6 +1,6 @@
 # ntask Technical Handbook
 
-> Version 1.0.0 - Python 3.11+ - BSD-3-Clause
+> Version 1.1.3 - Python 3.11.4+ - BSD-3-Clause
 
 ---
 
@@ -29,7 +29,7 @@
 
 ntask is a Python-native task runner built around four properties:
 
-- **Python-native.** Tasks are plain Python functions. No DSL, no YAML, no shell-string-with-substitution. Type annotations drive CLI argument parsing automatically.
+- **Python-native.** Tasks are plain Python functions. No DSL, no YAML, no shell-string-with-substitution. Type annotations drive CLI argument parsing.
 - **Explicit.** Every dependency is declared. Nothing runs unless the DAG asks it to.
 - **File-based.** Configuration lives in `tasks.py` and `pyproject.toml`. There's no server, no daemon.
 - **Cache-correct.** Caching is content-addressed, not timestamp-based. A file checked out, restored, or rebuilt with identical content always hashes the same.
@@ -38,7 +38,7 @@ ntask is a Python-native task runner built around four properties:
 
 Make re-runs everything unless you carefully maintain `.PHONY` targets and mtime stamps. just has no dependency graph. Invoke (Fabric's task runner) works for simple tasks but has no DAG and no caching. doit has caching but uses a verbose dict-based task format. Bazel is hermetic and expensive to set up.
 
-ntask occupies the space between those tools: smarter than Make for the cases that matter (lint, typecheck, test, build) without Bazel's setup cost.
+ntask sits between those tools: smarter than Make for the cases that matter (lint, typecheck, test, build) without Bazel's setup cost.
 
 ### Killer feature: transitive cache-key propagation
 
@@ -97,7 +97,7 @@ The `local-fs` and `http` remote backends use only the standard library and need
 
 ```bash
 ntask --version
-# ntask 1.0.0
+# ntask 1.1.3
 ```
 
 ---
@@ -136,7 +136,7 @@ def check():
 ntask --list
 ntask test
 ntask check                 # lint + test
-ntask check -j              # all CPU cores
+ntask -j check              # all CPU cores
 ntask watch test            # rerun on input change
 ```
 
@@ -148,7 +148,7 @@ o test cached (4b7e1a82)
 + check (0.00s)
 ```
 
-Edit a source file and run again - only the affected tasks rerun. Run `ntask --why test` to see exactly what changed.
+Edit a source file and run again: only the affected tasks rerun. Run `ntask --why test` to see what changed.
 
 ---
 
@@ -172,17 +172,17 @@ def publish():
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `deps` | `list[Callable \| str]` | `[]` | Tasks (or fqn strings) that must complete first. |
+| `deps` | `list[Callable \| str]`, or a zero-arg callable returning one | `[]` | Tasks (or fqn strings) that must complete first. The callable form defers resolution until graph-build time. |
 | `parallel` | `bool` | `True` | If `False`, this task runs alone (see §7.3). |
-| `concurrency` | `int \| None` | `None` | **Removed in 1.0.** Has no effect. |
+| `concurrency` | `int \| None` | `None` | **Deprecated.** Has no effect and emits a `DeprecationWarning`. |
 
 Decorated functions keep their original signature and remain callable from tests or other code.
 
-**Discovery** walks upward from the current working directory looking for `tasks.py` or a `tasks/` package (with `__init__.py`). The first match wins. Importing the module executes top-level decorators which populate the registry.
+**Discovery** walks upward from the current working directory looking for `tasks.py` or a `tasks/` package (with `__init__.py`). The first match wins. Importing the module runs the top-level decorators, which populate the registry.
 
-**FQN.** A bare task `build` has fqn `"build"`. A method inside a `@group` has fqn `"<group>.<method>"`.
+**fqn.** A bare task `build` has fqn `"build"`. A method inside a `@group` has fqn `"<group>.<method>"`.
 
-**Type hints become CLI args.** ntask inspects the function signature and builds an argparse subparser for the task automatically:
+**Type hints become CLI args.** ntask inspects the function signature and builds an argparse parser for the task:
 
 ```python
 @task
@@ -250,7 +250,7 @@ class Docs:
 
 Registers `docs.build` and `docs.serve`. Methods take no `self`. Group names must be non-empty and must not contain `.`. Nesting groups isn't supported.
 
-Cross-group dependencies work via `@task(deps=[Other.method, ...])` - the class attribute resolves through the underlying `__ntask_task__` marker - or via fqn strings.
+Cross-group dependencies work via `@task(deps=[Other.method, ...])` (the class attribute resolves through the underlying `__ntask_task__` marker) or via fqn strings.
 
 ### 4.4 `depends(*tasks)`
 
@@ -310,10 +310,10 @@ def shell(
 
 **Execution modes** chosen automatically:
 
-1. **Capture** (`capture=True`) - `subprocess.run` with `capture_output=True`. No streaming, no prefix.
-2. **Log-file** (TUI active) - stdout+stderr piped to `.ntask/logs/<run-id>/<fqn>.log`. Nothing on screen.
-3. **Prefixed streaming** (parallel, no TUI) - lines piped through threads that prefix `[fqn] ` before flushing.
-4. **Default streaming** - `subprocess.run` inheriting stdout/stderr.
+1. **Capture** (`capture=True`): `subprocess.run` with `capture_output=True`. No streaming, no prefix.
+2. **Log-file** (TUI active): stdout+stderr piped to `.ntask/runs/<run-id>/<fqn>.log`. Nothing on screen.
+3. **Prefixed streaming** (parallel, no TUI): lines piped through threads that prefix `[fqn] ` before flushing.
+4. **Default streaming**: `subprocess.run` inheriting stdout/stderr.
 
 `check=True` (default) raises `ShellError` on non-zero exit.
 

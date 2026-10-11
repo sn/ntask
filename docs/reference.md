@@ -23,9 +23,9 @@ def fn(): ...
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `deps` | `list[Callable \| str]` | `[]` | Tasks (or fqn strings) that must complete before this one. |
+| `deps` | `list[Callable \| str]`, or a zero-arg callable returning one | `[]` | Tasks (or fqn strings) that must complete before this one. The callable form defers resolution until graph-build time. |
 | `parallel` | `bool` | `True` | If `False`, this task runs alone: it waits for in-flight siblings to drain, then holds the DAG exclusively for its runtime. |
-| `concurrency` | `int \| None` | `None` | **Deprecated, removed in 1.0.** Has no effect. |
+| `concurrency` | `int \| None` | `None` | **Deprecated.** Has no effect and emits a `DeprecationWarning`. |
 
 The decorated function keeps its original signature and is callable as a normal Python function from tests or other code.
 
@@ -75,7 +75,7 @@ Cross-group dependencies via `@task(deps=[Api.lint, ...])` (the class attribute 
 
 ## `depends(*tasks)`
 
-Inside a task body, declares dependencies. Static analysis lifts the call into the DAG at registration time, so deps resolve before execution.
+Inside a task body, declares dependencies. This is a static declaration: ntask AST-scans the task body at graph-build time and turns each `depends(...)` call into a DAG edge, so the deps run first.
 
 ```python
 @task
@@ -83,9 +83,9 @@ def check():
     depends(lint, test)
 ```
 
-- Bare-name references (`lint`, `test`) work: they map to registered fqns of the same name.
-- Dotted attributes (`Api.lint`) and string fqns are NOT picked up by static analysis. For cross-group references, use `@task(deps=[...])` instead.
-- Outside a running task (during import, in tests), `depends()` is a no-op so importing `tasks.py` doesn't execute anything.
+- Plain names (`lint`, `test`) and dotted names (`Api.lint`, `mod.build`) work. They resolve to whatever task the name refers to in the function's scope, so aliased imports and grouped tasks resolve correctly.
+- Anything computed at runtime (`depends(*xs)`, `depends(pick())`, a string literal) can't be seen by the scanner. ntask emits a `UserWarning` at graph-build time and adds no edge. Use `@task(deps=[...])` for those.
+- At runtime the call itself is a no-op. By the time control reaches it, the deps have already run. Calling it outside a task (during import, in tests) is also a no-op.
 
 ## `shell()`
 
@@ -108,7 +108,7 @@ Run a subprocess.
 - **`capture=True`**: returns a `ShellResult` with stdout/stderr collected.
 - **Default**: streams output live and returns `None` on success.
 
-Under parallel execution (`-j > 1`), output is automatically prefixed with `[fqn]` per line so concurrent tasks' lines don't interleave silently. Under the TUI, output is captured to `.ntask/logs/<run-id>/<fqn>.log`. `capture=True` always uses captured mode regardless of context.
+Under parallel execution (`-j > 1`), each output line is prefixed with `[fqn]` so concurrent tasks' lines don't interleave silently. Under the TUI, output is captured to `.ntask/runs/<run-id>/<fqn>.log`. `capture=True` always uses captured mode regardless of context.
 
 ## `ShellResult`
 
@@ -124,7 +124,7 @@ class ShellResult:
     def ok(self) -> bool: ...
 ```
 
-Returned by `shell(capture=True)` (always populated) or `shell(check=False)` (populated only on non-zero exit). Otherwise `shell()` returns `None`.
+Returned by `shell(capture=True)` (stdout/stderr populated) or `shell(check=False)` (returncode and duration only; stdout/stderr are empty strings). Otherwise `shell()` returns `None`.
 
 ## Errors
 
@@ -157,6 +157,10 @@ ntask [GLOBAL FLAGS] [TASK [TASK_ARGS...]]
 | `-q`, `--quiet` | Suppress cache-hit lines. |
 | `--no-color` | Disable ANSI colour. |
 | `--no-tui` | Use the line-based renderer instead of the live TUI. |
+| `--log-dir DIR` | Per-run log directory (default `<root>/.ntask/runs`). |
+| `--max-runs N` | Keep only the N most recent run dirs (default 50). |
+| `--tb {short,long,line,none}` | Traceback mode for task failures (default `short`). |
+| `--completion {bash,zsh,fish}` | Print a shell completion script and exit. |
 | `--version` | Print version and exit. |
 | `-h`, `--help` | Print help. |
 
@@ -164,6 +168,7 @@ ntask [GLOBAL FLAGS] [TASK [TASK_ARGS...]]
 
 ```
 ntask <task> [args...]    # run a task; args populate task parameters
+ntask init [--template=plain|django|fastapi] [--force]   # scaffold tasks.py
 ntask clean [--all]       # wipe .ntask/cache (or the whole .ntask/ tree)
 ntask watch <task> [args] # rerun task on input changes; requires @cached
 ```
@@ -208,7 +213,7 @@ Defaults make the parameter optional with a `--` flag; missing default makes it 
 
 ## Public marker attributes
 
-ntask attaches a few dunder attributes to your decorated functions so the runtime can resolve cross-group references. These are public but stable:
+ntask attaches a few dunder attributes to your decorated functions so the runtime can resolve cross-group references. They are public and stable:
 
 | Attribute | Type | Meaning |
 |---|---|---|
@@ -221,5 +226,5 @@ You can read these for introspection. Don't mutate them.
 ## Version
 
 ```python
-ntask.__version__   # "1.0.0"
+ntask.__version__   # "1.1.3"
 ```

@@ -1,6 +1,6 @@
 # Caching: the full contract
 
-Caching is what makes ntask faster than re-running everything. This document specifies precisely what gets hashed, what counts as a hit, and why.
+Caching is what makes ntask faster than re-running everything. This document specifies what gets hashed, what counts as a hit, and why.
 
 ## What `@cached` does
 
@@ -32,15 +32,15 @@ The key is a single xxh3_128 hash over a length-prefixed concatenation, in this 
 |---|---|---|
 | 1 | Format version (`ntask/v1`) | Constant; isolates entries across major schema changes. |
 | 2 | Task fqn | `lint`, `api.test`, etc. |
-| 3 | Body hash | Structural AST hash of the task function (see below). Skipped when `strict=False`. |
-| 4 | Python version | `sys.version_info[:3]`, e.g. `3.12.3`. Skipped when `strict=False`. |
-| 5 | Platform tag | `<system>-<machine>` lowercased, e.g. `linux-x86_64`. Skipped when `strict=False`. |
+| 3 | Body hash | Structural AST hash of the task function (see below). Replaced by a placeholder when `strict=False`. |
+| 4 | Python version | `sys.version_info[:3]`, e.g. `3.12.3`. Replaced by a placeholder when `strict=False`. |
+| 5 | Platform tag | `<system>-<machine>` lowercased, e.g. `linux-x86_64`. Replaced by a placeholder when `strict=False`. |
 | 6 | Env values | One `NAME=value` line per `env=` entry, sorted by name. Unset vars contribute `<unset>`. |
 | 7 | Input patterns | The `inputs=` glob strings, sorted. |
 | 8 | Input manifest | Hash over `(path, content-digest, mode)` triples for every matched file. |
 | 9 | Upstream keys | The resolved keys of direct dependencies, in declaration order. Skipped when `propagate=False`. |
 
-Each field is fed in with an 8-byte length prefix, preventing one field from spilling into the next.
+Each field is fed in with an 8-byte length prefix, so one field can't spill into the next.
 
 ## The body hash
 
@@ -64,7 +64,7 @@ If you can't get source for a task (lambda, dynamically generated function), the
 
 When task `B` depends on task `A` (via `@task(deps=[A])` or a static `depends(A)` call), `A`'s resolved key is included as an upstream-key in `B`'s key computation.
 
-The effect: if `A` is invalidated for any reason - inputs changed, body changed, upstream of `A` changed - `B` automatically misses too, even when `B`'s own inputs and env are unchanged. Build correctness is structural.
+The effect: if `A` is invalidated for any reason (inputs changed, body changed, upstream of `A` changed), `B` misses too, even when `B`'s own inputs and env are unchanged. Build correctness is structural.
 
 This propagates the full depth of the DAG. A change at the leaves invalidates everything that transitively depends on those leaves.
 
@@ -91,11 +91,11 @@ Don't use `strict=False` for code-execution tasks where the binary you produce d
 - `.gitignore` is consulted if present; ignored files are removed from the matched set.
 - Files are content-hashed with xxh3_128. Mtime is irrelevant: a file checked out from git, restored from a backup, or re-saved with the same content all hash identically.
 - File mode is included in the manifest, so `chmod +x` invalidates.
-- Sorted before hashing - filesystem ordering doesn't affect the result.
+- Sorted before hashing, so filesystem ordering doesn't affect the result.
 
 ### Negation
 
-`!pattern` re-modifies a previously-included match (same as `.gitignore`). Put the broader include first, then the negation:
+`!pattern` excludes files that an earlier pattern included (same as `.gitignore`). Put the broader include first, then the negation:
 
 ```python
 @cached(inputs=["src/**/*.py", "!src/generated/**/*.py"])
@@ -119,11 +119,11 @@ Effects:
 
 `env=["NAME1", "NAME2"]` includes the named environment variables' values in the cache key. Unset variables contribute the string `<unset>`. Use this when a task's behavior actually depends on env (CI flag, target arch, build env).
 
-Don't include every env var "to be safe": most env churn is irrelevant noise that just disables your cache.
+Don't include every env var "to be safe": most env churn is irrelevant noise that disables your cache.
 
 ## Miss reporting
 
-Every cache decision produces a `MissReport` - a tuple of `MissItem(kind, detail)` describing exactly why the lookup didn't hit.
+Every cache miss produces a `MissReport`: a tuple of `MissItem(kind, detail)` describing why the lookup didn't hit.
 
 | `kind` | When |
 |---|---|
@@ -141,9 +141,9 @@ Every cache decision produces a `MissReport` - a tuple of `MissItem(kind, detail
 
 Order in the report: `input-*` first (alphabetical by path, kinds interleaved per file), then `env-*` (alphabetical), then `body-changed`, then `upstream-invalidated` (alphabetical by dep), then `python-changed` and `platform-changed`. The `first-run` kind always appears alone.
 
-The line-renderer prints the first item inline (`x test: cache miss (input-modified: src/auth.py (+2 more))`).
+The line renderer prints the first item inline (`x test: cache miss (input-modified: src/auth.py (+2 more))`).
 
-`ntask --why <task>` prints the full report plus the prior cache entry's breakdown so you can see exactly what state the prior key was computed against.
+`ntask --why <task>` prints the full report plus the prior cache entry's breakdown so you can see what state the prior key was computed against.
 
 ## Cache layout
 
@@ -157,7 +157,7 @@ The line-renderer prints the first item inline (`x test: cache miss (input-modif
 |   |-- <outputs-hash>/
 |   |   |-- dist/
 |   |       |-- mypackage-1.0.whl
-|-- logs/
+|-- runs/
     |-- <run-id>/
         |-- lint.log
         |-- test.log
@@ -165,7 +165,7 @@ The line-renderer prints the first item inline (`x test: cache miss (input-modif
 
 - `cache/<fqn>/<key>.json` is the cache entry (key, outputs-hash, duration, completed_at, breakdown). One file per (task, key) pair.
 - `outputs/<outputs-hash>/` is the captured output blob, content-addressed. Two tasks with identical output trees share storage.
-- `logs/<run-id>/<fqn>.log` captures stdout+stderr per task during TUI runs (timestamp run-id; multiple runs accumulate).
+- `runs/<run-id>/<fqn>.log` captures stdout+stderr per task on every run. The run-id is a UTC timestamp; the 50 most recent runs are kept (see `--max-runs`).
 
 ## Safety valves
 
@@ -182,14 +182,14 @@ The line-renderer prints the first item inline (`x test: cache miss (input-modif
 
 Things ntask deliberately ignores:
 
-- **File mtime** - timestamps are unreliable across checkouts and restores. Content is what matters.
-- **Comments and docstrings** - they're stripped before hashing.
-- **Whitespace, line endings, and formatting** - structural AST hash is stable under these.
-- **Sibling tasks** - only direct dependencies (and their transitive keys) feed into this task's key.
-- **Repository state** (commit SHA, branch) - if your tool actually consumes git state, declare relevant files as inputs (e.g., `.git/HEAD`) or env vars.
+- **File mtime**: timestamps are unreliable across checkouts and restores. Content is what matters.
+- **Comments and docstrings**: they're stripped before hashing.
+- **Whitespace, line endings, and formatting**: the structural AST hash is stable under these.
+- **Sibling tasks**: only direct dependencies (and their transitive keys) feed into this task's key.
+- **Repository state** (commit SHA, branch): if your tool actually consumes git state, declare relevant files as inputs (e.g., `.git/HEAD`) or env vars.
 
 ## Performance notes
 
 - xxh3_128 is roughly 10x faster than SHA-256 on modern hardware. Hashing isn't typically the bottleneck.
-- File hashing is parallelized via a `ThreadPoolExecutor` when many inputs are present.
+- File hashing is parallelized via a `ThreadPoolExecutor`.
 - For large outputs (gigabyte+), capture is a content-addressed copy on disk; remote upload constructs the tarball in memory and may pressure RAM. The remote tarball is deterministic (sorted entries, mtime=0), so identical outputs share storage on the remote too.

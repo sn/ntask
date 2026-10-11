@@ -17,7 +17,7 @@ Your Makefile runs everything every time. Your Justfile has no dependency graph.
 
 ## Quickstart
 
-A complete release pipeline in 20 lines. Drop this into `tasks.py` at your project root:
+A complete release pipeline in under 30 lines. Drop this into `tasks.py` at your project root:
 
 ```python
 from ntask import task, cached, shell
@@ -48,23 +48,23 @@ def release(version: str):
     shell(f"git tag v{version} && git push --tags && twine upload dist/*")
 ```
 
-The first time you cut a release, every step runs:
+The first time you cut a release, every step runs. `-j` runs independent tasks in parallel:
 
 ```
 $ ntask release --version=1.0.0 -j
 running lint
 running typecheck
 running test
+running build
 + lint       (1.4s)
++ build      (2.3s)
 + typecheck  (3.2s)
 + test       (4.9s)
-running build
-+ build      (2.3s)
 running release
 + release    (0.9s)
 ```
 
-The second time, ntask hashes the inputs, sees nothing changed, and skips every cached task. The whole `dist/` directory is restored from the content-addressed store without re-running `build`:
+The second time, ntask hashes the inputs, sees nothing changed, and skips every cached task. It restores `dist/` from its content-addressed store, so `build` never runs:
 
 ```
 $ ntask release --version=1.0.1 -j
@@ -76,23 +76,25 @@ running release
 + release    (0.9s)
 ```
 
-Edit one file in `src/` and only the tasks whose inputs match that file rerun. `release` isn't cached so it always runs, but everything downstream of an unchanged input stays a hit. That's transitive content-hash caching in five decorators.
+Edit one file under `tests/` and only `test` reruns. `lint`, `typecheck` and `build` don't read that file, so they stay cached. `release` isn't cached, so it always runs.
 
-Other things you'll reach for:
+Cache keys also chain: a cached task's key includes the keys of the tasks it depends on, so a change upstream invalidates everything below it, even when the downstream task's own files haven't changed.
+
+A few more commands:
 
 ```bash
-ntask --list                       # show every registered task with docstring
+ntask --list                       # list every task with its docstring
 ntask test --pattern=auth          # type hints become CLI flags automatically
-ntask --why test                   # explain the last cache decision item-by-item
+ntask --why test                   # explain the last cache hit or miss, item by item
 ntask --graph release              # ASCII DAG (mermaid / dot also available)
 ntask watch test                   # rerun on every src/ or tests/ change
 ```
 
 ### Mermaid graph for docs
 
-`--graph-format mermaid` emits a Mermaid block you can paste directly
-into a README or design doc. The example below is `ntask`'s own DAG,
-captured straight from `ntask --graph --graph-format mermaid`:
+`--graph-format mermaid` prints a Mermaid block you can paste into a
+README or design doc. This is `ntask`'s own DAG, straight from
+`ntask --graph --graph-format mermaid`:
 
 ```mermaid
 graph TD
@@ -114,7 +116,7 @@ graph TD
 
 ## Team cache
 
-Share cache hits across machines via S3 (or GCS, HTTP, NFS):
+Share cache hits across machines through S3, GCS, HTTP or a shared directory (NFS, a Docker volume):
 
 ```toml
 # pyproject.toml
@@ -125,47 +127,46 @@ bucket = "my-team-cache"
 
 ```bash
 pip install ntask[s3]
-ntask check                        # first person populates, the rest hit instantly
+ntask check                        # the first run fills the cache; everyone else gets hits
 ntask check --offline              # skip the remote for fast dev loops
 ```
 
-S3-compatibles (MinIO, R2, B2) take an `endpoint_url`. GCS and HTTP backends work the same way; the HTTP backend is plain `GET`/`PUT`/`HEAD` over stdlib `urllib`, so any object store with PUT enabled is fair game.
+For S3-compatible stores (MinIO, R2, B2), set `endpoint_url`. GCS and HTTP backends work the same way. The HTTP backend is plain `GET`/`PUT`/`HEAD` over stdlib `urllib`, so any server that accepts `PUT` will do.
 
 ## When NOT to use `@cached`
 
-`@cached` shines on deterministic, input-driven work — `lint`, `typecheck`,
-`test`, `build`. It's the wrong fit when the task is *the world reacting*.
-Skip it (or be very deliberate about `inputs=` and `env=`) when the task:
+`@cached` suits deterministic work driven by files: `lint`, `typecheck`,
+`test`, `build`. It's the wrong fit when the point of the task is its effect
+on the world. Skip it (or be deliberate about `inputs=` and `env=`) when the task:
 
-- has external side effects — DB writes, HTTP requests, sending email, queue
+- has external side effects: DB writes, HTTP requests, sending email, queue
   pushes. A cache hit means none of that happened on this run.
-- mutates shared state your other tasks read — caches, file ownership, the
-  contents of `.env`, dotted-out feature flags, the kernel's TCP backlog.
-- depends on the clock or on randomness — anything where the same inputs
-  produce different output tomorrow.
-- *exists to test the world* — smoke tasks, integration probes, "does prod
-  still look healthy" scenarios. The whole point is to re-execute.
+- changes shared state that other tasks read: caches, file ownership, the
+  contents of `.env`, feature flags.
+- depends on the clock or on randomness, so the same inputs can produce
+  different output tomorrow.
+- *exists to check the world*: smoke tests, integration probes, "is prod
+  still healthy" checks. The whole point is to run again.
 
-For these, plain `@task` is the right call. Reach for `parallel=False` if
-the task must run alone (releases, migrations); reach for `@group(...)` to
-namespace them; don't reach for `@cached`.
+Use plain `@task` for these. Add `parallel=False` if the task must run alone
+(releases, migrations), and `@group(...)` to namespace related tasks.
 
 ## Live DAG display
 
-Run `ntask check` from an interactive terminal and a Textual TUI shows a live tree of the DAG with per-task state icons and durations. Pipe the output, set `tui = false` in `[tool.ntask]`, or pass `--no-tui` to fall back to the line-based renderer.
+Run `ntask check` in an interactive terminal and a Textual TUI shows the DAG as a live tree, with each task's state and duration. Pipe the output, set `tui = false` in `[tool.ntask]`, or pass `--no-tui` to get plain line-by-line output instead.
 
-## Other things you'll reach for
+## More features
 
-- **Exclusive tasks.** `@task(parallel=False)` makes a task a DAG-wide barrier: it waits for everything in flight to drain, then runs alone. Use it for releases, migrations, anything that mutates shared state.
-- **Monorepos.** `@group("api")` over a class namespaces every task method as `api.<name>`. Cross-group dependencies via `@task(deps=[Other.task, ...])` or string fqns.
+- **Exclusive tasks.** `@task(parallel=False)` waits for every running task to finish, then runs alone. Use it for releases, migrations and anything else that changes shared state.
+- **Monorepos.** Put `@group("api")` on a class and its task methods become `api.<name>`. Depend across groups with `@task(deps=[Other.task, ...])` or a string name such as `"web.test"`.
 - **Capture output.** `shell("git rev-parse HEAD", capture=True)` returns a `ShellResult` with `.stdout`, `.stderr`, `.returncode`, `.duration`, `.ok`.
-- **Force a rerun.** `ntask --force <task>` bypasses the cache for that one task. `ntask --no-cache` ignores the cache entirely. `ntask clean` wipes entry manifests; `ntask clean --all` wipes the whole `.ntask/` directory.
+- **Force a rerun.** `ntask --force <task>` skips the cache for that one task. `ntask --no-cache` ignores the cache entirely. `ntask clean` deletes the cache entries; `ntask clean --all` deletes the whole `.ntask/` directory.
 
 ## Examples
 
 Six runnable, self-contained examples under [`examples/`](examples/):
 
-| File                                            | Demonstrates                                   |
+| Example                                      | Demonstrates                                   |
 |----------------------------------------------|------------------------------------------------|
 | [01-hello](examples/01-hello/)               | Smallest possible cached task                  |
 | [02-python-lib](examples/02-python-lib/)     | install / lint / typecheck / test / build      |
@@ -174,7 +175,7 @@ Six runnable, self-contained examples under [`examples/`](examples/):
 | [05-remote-cache](examples/05-remote-cache/) | local-fs remote backend shared between clones  |
 | [06-monorepo](examples/06-monorepo/)         | `@group(...)` namespacing and cross-group deps |
 
-`cd` into any directory and run `ntask --list`.
+`cd` into any of them and run `ntask --list`.
 
 ## Features
 
@@ -190,17 +191,17 @@ Six runnable, self-contained examples under [`examples/`](examples/):
 | Live DAG TUI                     |  yes  |   no    |   no    |   no    |   no    |   no    |
 | Windows first-class              |  yes  | partial |   yes   |   yes   |   yes   |   yes   |
 
-Cache miss messages name the specific file or env change that caused the invalidation. `ntask --why <task>` prints the full breakdown.
+When a task misses the cache, ntask names the file or env var that changed. `ntask --why <task>` prints the full breakdown.
 
 ## Docs
 
-- [Technical handbook](docs/guide.md) - the comprehensive reference, every flag and config key
+- [Technical handbook](docs/guide.md): every flag and config key
 - [Tutorial: replace your Makefile in 10 minutes](docs/tutorial.md)
 - [Caching: the full contract](docs/caching.md)
 - [Migrating from Make / just / Invoke / Poe](docs/migration.md)
 - [Short API reference](docs/reference.md)
 
-Requirements: Python 3.11.4 or newer. BSD-3-Clause.
+Requirements: Python 3.11.4 or newer.
 
 ## License
 
