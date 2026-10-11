@@ -9,7 +9,7 @@ class RemoteBackend(Protocol):
     """Pluggable remote cache backend. All methods are synchronous.
 
     Implementations raise on network/auth/IO errors. The cache layer catches
-    exceptions and falls back to local-only (with one warn-once per process).
+    exceptions and falls back to the local cache, warning once per process.
     """
 
     def has_entry(self, fqn: str, key: str) -> bool: ...

@@ -45,9 +45,8 @@ class _LogTee:
         silent = _current_silent_capture.get()
         if silent:
             # TUI mode — keep the terminal clean and let the log file be
-            # the record. We still return a credible byte count so the
-            # caller (logging handlers, print, etc.) sees a successful
-            # write.
+            # the record. Still return the full length so the caller
+            # (logging handlers, print, etc.) sees a successful write.
             n = len(s)
         else:
             try:
@@ -55,7 +54,7 @@ class _LogTee:
                 n = int(written) if written is not None else len(s)
             except Exception:
                 # Capture must never break a task body; fall back to the
-                # nominal byte count and continue to the log file.
+                # nominal length and continue to the log file.
                 n = len(s)
         log_path = _current_log_file.get()
         if log_path is not None and s:
@@ -119,8 +118,8 @@ def _append_to_log(path: Path, s: str) -> None:
 # DAG view.
 #
 # `hijack_logging_streams` walks every installed StreamHandler, and for any
-# whose ``.stream`` is the originals captured before the tee was installed,
-# rebinds it to the tee. `restore_logging_streams` puts the originals back.
+# whose ``.stream`` is ``sys.__stdout__`` or ``sys.__stderr__``, rebinds it
+# to the matching tee. `restore_logging_streams` puts the originals back.
 # ---------------------------------------------------------------------------
 
 def hijack_logging_streams(

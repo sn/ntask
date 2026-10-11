@@ -31,7 +31,7 @@ class Web:
 
 @task(deps=[Api.lint, Api.test, Web.lint, Web.test])
 def check():
-    """Check every subproject. Mix groups freely via dotted FQNs."""
+    """Check every subproject; deps can come from any group."""
 
 
 @task(deps=[Api.lint, Api.test])

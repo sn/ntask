@@ -1,7 +1,7 @@
 # 02 · python-lib
 
 A realistic `tasks.py` for a small Python library. Mirrors the shape of
-ntask' own `tasks.py`.
+ntask's own `tasks.py`.
 
 ## Run
 
@@ -30,6 +30,6 @@ ntask check               # content changed → lint, typecheck, test re-run
   `-j 3` to execute all three in parallel (the `-j` flag is global, so it
   goes before the task name).
 - `build` declares `outputs=["dist/"]`. On a cache hit, ntask restores
-  the `dist/` artefact - no rebuild needed.
+  the `dist/` artefact without rebuilding.
 - Inputs include `pyproject.toml`. Bumping the package version or changing
-  a dep correctly invalidates lint/typecheck/test/build.
+  a dep invalidates lint/typecheck/test/build.

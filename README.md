@@ -48,10 +48,10 @@ def release(version: str):
     shell(f"git tag v{version} && git push --tags && twine upload dist/*")
 ```
 
-The first time you cut a release, every step runs. `-j` runs independent tasks in parallel:
+The first time you cut a release, every step runs. `-j` runs independent tasks in parallel (global flags go before the task name):
 
 ```
-$ ntask release --version=1.0.0 -j
+$ ntask -j release --version=1.0.0
 running lint
 running typecheck
 running test
@@ -67,7 +67,7 @@ running release
 The second time, ntask hashes the inputs, sees nothing changed, and skips every cached task. It restores `dist/` from its content-addressed store, so `build` never runs:
 
 ```
-$ ntask release --version=1.0.1 -j
+$ ntask -j release --version=1.0.1
 o lint       cached (3a8f9c2d)
 o typecheck  cached (b7c5f1e9)
 o test       cached (9f2e8b14)
@@ -128,7 +128,7 @@ bucket = "my-team-cache"
 ```bash
 pip install ntask[s3]
 ntask check                        # the first run fills the cache; everyone else gets hits
-ntask check --offline              # skip the remote for fast dev loops
+ntask --offline check              # skip the remote for fast dev loops
 ```
 
 For S3-compatible stores (MinIO, R2, B2), set `endpoint_url`. GCS and HTTP backends work the same way. The HTTP backend is plain `GET`/`PUT`/`HEAD` over stdlib `urllib`, so any server that accepts `PUT` will do.
@@ -160,7 +160,7 @@ Run `ntask check` in an interactive terminal and a Textual TUI shows the DAG as 
 - **Exclusive tasks.** `@task(parallel=False)` waits for every running task to finish, then runs alone. Use it for releases, migrations and anything else that changes shared state.
 - **Monorepos.** Put `@group("api")` on a class and its task methods become `api.<name>`. Depend across groups with `@task(deps=[Other.task, ...])` or a string name such as `"web.test"`.
 - **Capture output.** `shell("git rev-parse HEAD", capture=True)` returns a `ShellResult` with `.stdout`, `.stderr`, `.returncode`, `.duration`, `.ok`.
-- **Force a rerun.** `ntask --force <task>` skips the cache for that one task. `ntask --no-cache` ignores the cache entirely. `ntask clean` deletes the cache entries; `ntask clean --all` deletes the whole `.ntask/` directory.
+- **Force a rerun.** `ntask --force test check` runs `check` but skips the cache for `test`. `ntask --no-cache` ignores the cache entirely. `ntask clean` deletes the cache entries; `ntask clean --all` deletes the whole `.ntask/` directory.
 
 ## Examples
 

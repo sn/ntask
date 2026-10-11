@@ -74,8 +74,8 @@ def _describe_changes(changes: set[tuple[int, str]], workspace: Path) -> str:
         rel = first
     extra = len(changes) - 1
     if extra > 0:
-        return f"change: {rel} modified (+{extra} more)"
-    return f"change: {rel} modified"
+        return f"{rel} changed (+{extra} more)"
+    return f"{rel} changed"
 
 
 async def _run_once(
@@ -116,12 +116,13 @@ async def watch_loop(
 
     if awatch_factory is None:
         if _awatch_factory is None:
-            raise RuntimeError("watchfiles is not installed")
+            raise RuntimeError(
+                "watchfiles is not installed; install it with: pip install watchfiles"
+            )
         awatch_factory = _awatch_factory
 
     is_relevant = _build_filter(task_obj, workspace)
 
-    # Initial run.
     _clear_screen()
     _print_status_header(task_obj, "initial run")
     try:
@@ -129,7 +130,6 @@ async def watch_loop(
     except KeyboardInterrupt:
         return 0
 
-    # Watch loop.
     try:
         async for changes in awatch_factory(workspace):
             relevant = {

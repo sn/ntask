@@ -14,7 +14,6 @@ from .manifest import compute_input_manifest
 from .outputs import OutputStore
 from .store import CacheEntry, CacheStore
 
-# Module-level flag for warn-once pattern.
 _remote_warn_fired = False
 
 

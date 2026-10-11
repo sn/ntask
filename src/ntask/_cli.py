@@ -55,7 +55,7 @@ def _build_global_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-tui", action="store_true",
                    help="Disable the TUI; use the line-based renderer.")
     p.add_argument("--log-dir", metavar="DIR",
-                   help="Per-run log directory (default <root>/.ntask/runs).")
+                   help="Directory for per-run log dirs (default <root>/.ntask/runs).")
     p.add_argument("--max-runs", type=int, default=None, metavar="N",
                    help="Retain only the N most recent run dirs (default 50).")
     p.add_argument("--tb", choices=["short", "long", "line", "none"],
@@ -82,18 +82,18 @@ Flags:
   -l, --list              List all tasks
   --graph [TASK]          Render task DAG
   --graph-format F        ascii | mermaid | dot
-  --dry-run               Plan only
+  --dry-run               List the tasks that would run; run nothing
   --no-cache              Ignore and do not write cache
   --offline               Skip remote cache; use local only
   --force TASK            Force-run TASK (repeatable)
-  --why TASK              Print last cache key breakdown
+  --why TASK              Explain what changed since TASK's last cached run
   -j, --jobs [N]          Global concurrency cap (bare -j = cpu_count)
   --keep-going            Continue on failure
   -v, --verbose           Stream all output
   -q, --quiet             Suppress cache-hit lines
   --no-color              Disable color
   --no-tui                Disable the TUI; use the line-based renderer
-  --log-dir DIR           Per-run log directory (default <root>/.ntask/runs)
+  --log-dir DIR           Directory for per-run log dirs (default <root>/.ntask/runs)
   --max-runs N            Retain only the N most recent run dirs (default 50)
   --tb MODE               Traceback for failures: short|long|line|none
   --completion SHELL      Emit a bash/zsh/fish completion script
@@ -102,7 +102,7 @@ Flags:
 Subcommands:
   ntask init [--template=plain|django|fastapi] [--force]
                           Scaffold a minimal tasks.py in the current dir
-  ntask clean [--all]     Wipe .ntask/ cache
+  ntask clean [--all]     Delete cache entries (--all: delete all of .ntask/)
   ntask watch <task>      Rerun the task when its @cached inputs change
 """)
 
@@ -235,13 +235,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_global_parser()
     ns, _ = parser.parse_known_args(argv)
 
-    # Handle bare -j case: if -j got a non-integer value and task is None,
-    # it likely means the value was actually the task name (e.g., -j hi)
+    # Bare -j case: if -j got a non-integer value and task is None, the
+    # value was probably the task name (e.g. `ntask -j hi`).
     if ns.jobs is not None and ns.task is None:
         try:
             int(ns.jobs)
         except (ValueError, TypeError):
-            # ns.jobs is not an integer, so it's probably the task name
             ns.task = ns.jobs
             ns.jobs = "auto"
 
@@ -299,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         cfg = load_project_config(root)
 
-        # Parse watch args: first element is the target task name; rest are task args.
+        # First watch arg is the target task name; the rest are task args.
         watch_args = ns.task_args
         if not watch_args:
             print(
@@ -356,8 +355,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return 2
 
-        # Watch mode continues to use the Rich/Log renderer in 0.6.0;
-        # TUI + watch integration is deferred.
+        # Watch mode uses the Rich/Log renderer; TUI + watch integration
+        # is deferred.
         from ._render import LogRenderer, RichRenderer
         watch_renderer: Any = None
         if sys.stdout.isatty() and not ns.no_color:

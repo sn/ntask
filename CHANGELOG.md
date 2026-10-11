@@ -26,11 +26,11 @@ this project uses semantic versioning.
 - `_LogTee` (the `sys.stdout` / `sys.stderr` proxy installed by the executor
   to capture per-task output) was writing to the underlying stream even
   under the TUI. Textual owns stdout but not stderr, so library code that
-  used `logging` to stderr (very common — structured JSON loggers, etc.)
+  used `logging` to stderr (common with structured JSON loggers, etc.)
   bled raw lines straight onto the live DAG view. The tee now consults
   `_current_silent_capture` and suppresses the underlying write while the
   TUI is active. The per-task log file still receives every line, so
-  nothing is dropped — only the terminal stream is quiet.
+  nothing is dropped; only the terminal stream is quiet.
 
 ### Documentation
 - `docs/design/pre-post-hooks.md` captures the deferred design for
@@ -51,7 +51,7 @@ this project uses semantic versioning.
   no longer feel positionally opaque. Silent for single-task runs. The
   TUI already provided this implicitly via the live tree.
 - The end-of-run summary now lists the failed tasks by name on a second
-  line — useful for `--keep-going` runs where there was no fail-fast and
+  line. Useful for `--keep-going` runs where there was no fail-fast and
   the user would otherwise have to scroll back through the log.
 - Shell completion: `ntask --completion bash|zsh|fish` prints a completion
   script. The script calls back into `ntask --completion-tasks` and
@@ -63,7 +63,7 @@ this project uses semantic versioning.
   Refuses to overwrite an existing `tasks.py` without `--force`. `init` is
   also reserved, so naming a task `init` now emits the same shadowing
   warning as `clean` / `watch`.
-- `ntask --list` now renders each task's CLI signature next to its name —
+- `ntask --list` now renders each task's CLI signature next to its name:
   `<required: type>`, `[--name=default]`, `[--flag]` for bool default-False,
   `[--no-flag]` for default-True. Long signatures are truncated at 40 chars
   so the table stays readable.
@@ -73,7 +73,7 @@ this project uses semantic versioning.
   resolver is invoked once at graph-build time and memoised.
 - Task failures now stream a traceback to stderr by default and append the
   full traceback to the per-task log file. New `--tb` global flag accepts
-  `short` (default), `long`, `line`, or `none` — the renderer's one-line
+  `short` (default), `long`, `line`, or `none`. The renderer's one-line
   `x <fqn> FAILED: ...` summary on stdout is unchanged.
 - Per-task log files are now written for every run, regardless of which
   renderer is active. The on-disk layout is
@@ -90,7 +90,7 @@ this project uses semantic versioning.
 ### Fixed
 - Registering a top-level task whose name collides with a built-in subcommand
   (`clean`, `watch`) now emits a `UserWarning` at registration time. Routing is
-  unchanged — the built-in still wins — but the warning makes it obvious that
+  unchanged (the built-in still wins), but the warning makes it obvious that
   the user task body will never execute.
 
 ### Notes

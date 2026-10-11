@@ -1,6 +1,6 @@
 # ntask Technical Handbook
 
-> Version 1.1.3 - Python 3.11.4+ - BSD-3-Clause
+> Version 1.1.5 - Python 3.11.4+ - BSD-3-Clause
 
 ---
 
@@ -70,7 +70,7 @@ pip install ntask
 
 Installs the `ntask` console script and the `ntask` Python package.
 
-**Requirements:** Python 3.11.4 or newer. Tested on 3.11, 3.12, and 3.13.
+**Requirements:** Python 3.11.4 or newer. CI tests 3.11, 3.12, and 3.13 on Linux only.
 
 ### Optional extras
 
@@ -97,7 +97,7 @@ The `local-fs` and `http` remote backends use only the standard library and need
 
 ```bash
 ntask --version
-# ntask 1.1.3
+# ntask 1.1.5
 ```
 
 ---
@@ -338,7 +338,7 @@ from ntask import NtaskError, CycleError, DiscoveryError, ShellError
 
 ## 5. CLI reference
 
-All interactions go through the `ntask` console script.
+All interactions go through the `ntask` console script. Global flags go before the task name; anything after it is parsed as task arguments.
 
 ### Global flags
 
@@ -358,6 +358,10 @@ All interactions go through the `ntask` console script.
 | `-q`, `--quiet` | Suppress cache-hit lines. |
 | `--no-color` | Disable ANSI colour. |
 | `--no-tui` | Use the line-based renderer. |
+| `--log-dir DIR` | Per-run log directory (default `<root>/.ntask/runs`). |
+| `--max-runs N` | Keep only the N most recent run dirs (default 50). |
+| `--tb {short,long,line,none}` | Traceback mode for task failures (default `short`). |
+| `--completion {bash,zsh,fish}` | Print a shell completion script and exit. |
 | `--version` | Print version and exit. |
 | `-h`, `--help` | Print help. |
 
@@ -437,9 +441,9 @@ Environment:
 
 `--why` reports local workspace deltas against the named task's prior breakdown. It doesn't simulate the full transitive graph.
 
-#### `ntask --force <task>`
+#### `ntask --force <task> <target>`
 
-Bypass the cache for a specific task. The task still runs and writes a new cache entry.
+Bypass the cache for `<task>` while running `<target>`. `--force` takes the task name as its value, so you still have to name the task to run (often the same one: `ntask --force test test`). The forced task still writes a new cache entry.
 
 ```bash
 ntask --force test check    # force test; lint cached as usual
@@ -473,7 +477,7 @@ The full contract is in [`caching.md`](caching.md). This section gives the worki
 
 ### 6.1 Why xxh3_128
 
-xxh3_128 is a non-cryptographic 128-bit hash. About 10x faster than SHA-256 on modern hardware, with collision probability negligible at the file counts a build pipeline produces. ntask's threat model is accidental collision, not adversarial.
+xxh3_128 is a non-cryptographic 128-bit hash. It's about 10x faster than SHA-256 on modern hardware, with collision probability negligible at the file counts a build pipeline produces. ntask's threat model is accidental collision, not adversarial.
 
 ### 6.2 The cache key
 
@@ -484,10 +488,10 @@ Every `@cached` task's key is xxh3_128 over a length-prefixed concatenation:
 3. Body hash (if `strict=True`)
 4. Python version (if `strict=True`)
 5. Platform tag (if `strict=True`)
-6. Env values - `NAME=value` per declared env name, sorted; unset is `<unset>`
-7. Input patterns - sorted globs
-8. Input manifest digest - hash of `(path, content-digest, mode)` triples
-9. Upstream keys - resolved keys of direct deps in declaration order (skipped if `propagate=False`)
+6. Env values: `NAME=value` per declared env name, sorted; unset is `<unset>`
+7. Input patterns: sorted globs
+8. Input manifest digest: hash of `(path, content-digest, mode)` triples
+9. Upstream keys: resolved keys of direct deps in declaration order (skipped if `propagate=False`)
 
 ### 6.3 Body hash: structural, not lexical
 
@@ -506,7 +510,7 @@ Consequences:
 
 If B depends on A, A's resolved key is part of B's key. A's miss propagates to B. This composes through the entire DAG.
 
-`@cached(propagate=False)` opts out for tasks whose output is genuinely independent of upstream output.
+`@cached(propagate=False)` opts out for tasks whose output is independent of upstream output.
 
 ### 6.5 Strict mode
 
@@ -518,11 +522,11 @@ If B depends on A, A's resolved key is part of B's key. A's miss propagates to B
 
 `pathspec` `gitwildmatch` mode:
 
-- `src/**/*.py` - all `.py` recursively under `src/`
-- `*.toml` - any `.toml` at the root
-- `!src/generated/**/*.py` - re-modify a previously-included match (same as `.gitignore`). Order matters: include first, then negate.
+- `src/**/*.py`: all `.py` recursively under `src/`
+- `*.toml`: any `.toml` at the root
+- `!src/generated/**/*.py`: excludes files an earlier pattern included (same as `.gitignore`). Order matters: include first, then negate.
 
-`.gitignore` is loaded from the project root and applied automatically. Files are sorted before hashing - filesystem ordering is irrelevant.
+`.gitignore` is loaded from the project root and applied automatically. Files are sorted before hashing, so filesystem ordering is irrelevant.
 
 ### 6.7 Output capture and restore
 
@@ -543,13 +547,13 @@ Two implications:
 |       +-- <key>.json     CacheEntry with breakdown
 +-- outputs/
 |   +-- <outputs-hash>/    content-addressed output tree
-+-- logs/
-    +-- <run-id>/          per-run TUI log dir
++-- runs/
+    +-- <run-id>/          per-run log dir
         +-- lint.log
         +-- test.log
 ```
 
-`ntask clean` removes `cache/` only. `ntask clean --all` removes the whole `.ntask/`. Log directories accumulate; clean manually with `rm -rf .ntask/logs/`.
+`ntask clean` removes `cache/` only. `ntask clean --all` removes the whole `.ntask/`. Run directories are pruned automatically to the 50 most recent (`--max-runs N` to change).
 
 ### 6.9 Miss reporting
 
@@ -583,7 +587,7 @@ x test: cache miss (input-modified: src/auth.py (+2 more))
 | Command | Effect |
 |---|---|
 | `ntask --no-cache` | Disable all cache reads/writes for this invocation. |
-| `ntask --force lint` | Bypass `lint`'s cache lookup; still write after. |
+| `ntask --force lint lint` | Bypass `lint`'s cache lookup; still write after. |
 | `ntask clean` | Wipe cache entries (outputs survive). |
 | `ntask clean --all` | Wipe the entire `.ntask/`. |
 
@@ -596,9 +600,9 @@ Sequential by default. Opt in per invocation.
 ### 7.1 Enabling
 
 ```bash
-ntask check -j        # concurrency = os.cpu_count()
-ntask check -j 4      # cap at 4
-ntask check --jobs 2  # same as -j 2
+ntask -j check        # concurrency = os.cpu_count()
+ntask -j 4 check      # cap at 4
+ntask --jobs 2 check  # same as -j 2
 ```
 
 `-j` is a global cap implemented as an `anyio.CapacityLimiter`. DAG ordering is preserved: a task waits for its dependencies; the limiter adds a "slot must be free" condition on top.
@@ -617,7 +621,7 @@ When concurrency is greater than 1, `shell()` reads the per-task `_current_line_
 
 Lines from the same task are atomic; lines from different tasks may interleave. With concurrency 1 (default) or `shell(capture=True)`, no prefix is added.
 
-### 7.3 `@task(parallel=False)` - DAG-wide barrier
+### 7.3 `@task(parallel=False)`: DAG-wide barrier
 
 For a release step, a database migration, anything that mutates shared state:
 
@@ -635,7 +639,7 @@ Implemented via an internal `_ParallelCoordinator` with anyio events. `parallel=
 
 ### 7.4 Stdin under parallel
 
-Under `-j > 1`, `shell()` sets `stdin=DEVNULL`. Tasks that prompt for input will receive EOF. If a task genuinely needs a TTY (pdb, interactive prompt), run sequentially (`-j 1`).
+Under `-j > 1`, `shell()` sets `stdin=DEVNULL`. Tasks that prompt for input receive EOF. If a task needs a TTY (pdb, interactive prompt), run sequentially (`-j 1`).
 
 ---
 
@@ -644,7 +648,7 @@ Under `-j > 1`, `shell()` sets `stdin=DEVNULL`. Tasks that prompt for input will
 ```bash
 ntask watch test
 ntask watch test --pattern=auth
-ntask watch lint -j 4
+ntask -j 4 watch lint
 ```
 
 Reruns a `@cached` task whenever any of its declared input files changes on disk.
@@ -652,7 +656,7 @@ Reruns a `@cached` task whenever any of its declared input files changes on disk
 ### 8.1 Behaviour
 
 - The target must be `@cached(inputs=[...])`. Watch uses the inputs glob as the watch set. Non-cached targets exit with code 2.
-- On startup, watch runs the task once even if the cache would have been a hit (gives you fresh output).
+- On startup, watch runs the task once through the normal executor. If the cache hits, the task is reported as cached, not re-run.
 - After the initial run, the watch loop awaits OS-level FS events from `watchfiles`. Each batch is filtered through `inputs` globs and `.gitignore`.
 - Relevant change: clear screen, print status header (`Watching: <patterns>` / `Target: <fqn> (<change-detail>)`), rerun.
 - Changes during a run are coalesced into one queued rerun; no cancel-and-restart.
@@ -661,7 +665,7 @@ Reruns a `@cached` task whenever any of its declared input files changes on disk
 
 - One target per `ntask watch` invocation.
 - Editing `tasks.py` doesn't reload. Ctrl-C and restart to pick up new task definitions.
-- The TUI doesn't activate during watch (line-based renderer is used).
+- The TUI doesn't activate during watch (the Rich or line-based renderer is used).
 - A delete-and-replace where the new file has the same content hash isn't detected as a change (rare edge case).
 
 Ctrl-C exits cleanly with code 0.
@@ -705,7 +709,7 @@ type = "local-fs"
 path = "/mnt/shared/cache"
 ```
 
-**HTTP** (any server with PUT enabled - plain `GET` / `PUT` / `HEAD` over stdlib `urllib`):
+**HTTP** (any server with PUT enabled; plain `GET` / `PUT` / `HEAD` over stdlib `urllib`):
 
 ```toml
 [tool.ntask.remote_cache]
@@ -810,25 +814,25 @@ The spinner rotates at 10 Hz via a Textual interval timer.
 The footer shows `starting...` for the duration of the run. After the executor finishes, the TUI exits and the CLI prints the final summary line:
 
 ```
-3 ran, 2 cached, 0 failed, 0 skipped  -  logs: .ntask/logs/20260422-103045-731
+3 ran, 2 cached, 0 failed, 0 skipped  ·  logs: .ntask/runs/20260422T103045-731Z
 ```
 
 ### 10.2 Log capture
 
-When the TUI is active, `shell()` output is redirected to per-task files at `.ntask/logs/<run-id>/<fqn>.log`. The run-id is `YYYYMMDD-HHMMSS-mmm`.
+Every run writes per-task log files to `.ntask/runs/<run-id>/<fqn>.log`. When the TUI is active, `shell()` output goes only to these files. The run-id is a UTC timestamp, `YYYYMMDDTHHMMSS-mmmZ`.
 
 ```bash
-cat .ntask/logs/20260422-103045-731/test.log
+cat .ntask/runs/20260422T103045-731Z/test.log
 ```
 
-Log directories accumulate; clean manually with `rm -rf .ntask/logs/`.
+Only the 50 most recent run directories are kept (`--max-runs N` to change, `--log-dir DIR` to move them).
 
 ### 10.3 Disabling
 
 In order of precedence:
 
 ```bash
-ntask check --no-tui                       # one-off
+ntask --no-tui check                       # one-off
 ```
 
 ```toml
@@ -844,7 +848,7 @@ The TUI also auto-disables in CI environments where stdout isn't a TTY. Setting 
 
 ### 10.4 Architecture
 
-Textual's `App.run()` must own the main thread (signal handlers). The executor is an anyio coroutine running multiple tasks concurrently. ntask resolves this by inverting:
+Textual's `App.run()` must own the main thread (signal handlers). The executor is an anyio coroutine running multiple tasks concurrently. ntask resolves this by running the executor on a background thread:
 
 ```
 Main thread             Background thread
@@ -859,7 +863,7 @@ tui_app.run()           anyio.run(executor.run, ...)
 
 The `TUIRenderer.start()` lifecycle hook waits on a `threading.Event` set when the app's `on_mount` fires. This avoids racing widget mutation against widget construction.
 
-When the executor completes, `TUIRenderer.stop()` posts `app.exit()` via `call_from_thread`. The main thread's `app.run()` then returns and the CLI joins the bg thread.
+When the executor completes, `TUIRenderer.stop()` posts `app.exit()` via `call_from_thread`. The main thread's `app.run()` then returns and the CLI joins the background thread.
 
 ---
 
@@ -929,6 +933,7 @@ src/ntask/
 +-- _cli_docstring.py    docstring summary extraction
 +-- _cli_format.py       --list and --graph rendering
 +-- _cli_why.py          --why renderer
++-- _completion.py       shell completion scripts (--completion)
 +-- _config.py           ProjectConfig, RemoteCacheConfig, loader
 +-- _coordinator.py      _ParallelCoordinator (parallel=False barriers)
 +-- _dag.py              Graph, toposort (Kahn), build_graph
@@ -936,6 +941,9 @@ src/ntask/
 +-- _discovery.py        find_project_root, discover
 +-- _errors.py           NtaskError, CycleError, DiscoveryError, ShellError
 +-- _executor.py         Executor, ExecutionConfig, RunResult
++-- _fsutil.py           atomic-write and other filesystem helpers
++-- _init.py             ntask init scaffolding
++-- _logio.py            per-task stdout/stderr capture (tee)
 +-- _registry.py         Registry, default_registry()
 +-- _shell.py            shell(), ShellResult, ContextVars for prefix/log-file
 +-- _task.py             task(), cached(), group(), Task, CachedConfig
@@ -998,7 +1006,7 @@ For each task in topological order:
 6. Emit `on_miss_reason`.
 7. Enter `_ParallelCoordinator` (respecting `parallel=False`).
 8. Acquire the `CapacityLimiter`.
-9. Set per-task ContextVars (`_current_log_file` for TUI, `_current_line_prefix` for parallel non-TUI).
+9. Set per-task ContextVars (`_current_log_file` always, `_current_line_prefix` for parallel non-TUI).
 10. Invoke the task. Sync functions go through `anyio.to_thread.run_sync`; async functions are awaited directly.
 11. Store cache entry, push to remote. Emit `on_ok`.
 12. On failure: emit `on_failed`, record in failures dict, re-raise (or suppress with `--keep-going`).
@@ -1008,16 +1016,16 @@ For each task in topological order:
 
 `CacheEngine` interface:
 
-- `compute_key_and_breakdown(t, workspace, upstream_keys_by_dep)` - returns `(key, CacheBreakdown)`. One call avoids redundant work; the breakdown is used for both lookup and miss reporting.
-- `check(t, key)` - local lookup.
-- `check_remote(t, key)` - remote lookup; mirrors entry+outputs to local on hit. Non-fatal on error.
-- `store_entry(t, key, ...)` - capture outputs, write JSON entry.
-- `restore_outputs(entry, workspace)` - hard-link or copy.
-- `push_remote(t, entry)` - upload entry + output tarball.
+- `compute_key_and_breakdown(t, workspace, upstream_keys_by_dep)`: returns `(key, CacheBreakdown)`. One call avoids redundant work; the breakdown is used for both lookup and miss reporting.
+- `check(t, key)`: local lookup.
+- `check_remote(t, key)`: remote lookup; mirrors entry+outputs to local on hit. Non-fatal on error.
+- `store_entry(t, key, ...)`: capture outputs, write JSON entry.
+- `restore_outputs(entry, workspace)`: hard-link or copy.
+- `push_remote(t, entry)`: upload entry + output tarball.
 
 `CacheStore` serialises `CacheEntry` to JSON at `.ntask/cache/<fqn>/<key>.json`. The breakdown is included so `--why` can diff against it.
 
-File hashing uses a `ThreadPoolExecutor` for parallel reads when many inputs are present.
+File hashing uses a `ThreadPoolExecutor` for parallel reads.
 
 ### 12.6 Renderer protocol
 
@@ -1031,12 +1039,12 @@ class Renderer(Protocol):
     def summary(self, *, ran: int, cached: int, failed: int, skipped: int) -> None: ...
 ```
 
-Optional lifecycle methods `start(graph, logs_dir)` and `stop()` are detected via `hasattr` - present on `TUIRenderer`, absent on `LogRenderer` and `RichRenderer`.
+Optional lifecycle methods `start(graph, logs_dir)` and `stop()` are detected via `hasattr`: present on `TUIRenderer`, absent on `LogRenderer` and `RichRenderer`.
 
 | Class | Used when |
 |---|---|
 | `LogRenderer` | Non-TTY (pipe / CI) or `--no-color`. |
-| `RichRenderer` | TTY with `--no-tui`, or watch mode. |
+| `RichRenderer` | TTY without the TUI (`--no-tui`, `tui = false`, or Textual missing), and watch mode on a TTY. |
 | `TUIRenderer` | TTY, colour enabled, `--no-tui` not set, Textual importable. |
 
 Selection lives in `_cli.py`.
@@ -1045,8 +1053,8 @@ Selection lives in `_cli.py`.
 
 Two ContextVars thread information from the executor into `shell()` without argument plumbing:
 
-- `_current_line_prefix: ContextVar[str | None]` - set to the task fqn when `-j > 1` and TUI inactive.
-- `_current_log_file: ContextVar[Path | None]` - set to the per-task log path when TUI is active.
+- `_current_line_prefix: ContextVar[str | None]`: set to the task fqn when `-j > 1` and the TUI is inactive.
+- `_current_log_file: ContextVar[Path | None]`: set to the per-task log path for every task. Under the TUI, `shell()` writes there instead of the screen.
 
 ContextVars are copy-on-write within anyio tasks, so values don't leak across coroutines. The executor resets the token after each task call.
 
@@ -1054,10 +1062,10 @@ ContextVars are copy-on-write within anyio tasks, so values don't leak across co
 
 `depends(*tasks)`:
 
-1. **Static (registration time):** an AST visitor reads `depends(name)` calls in the function source and adds DAG edges before any task runs. Bare-name references are resolved against the registry at graph-build time.
-2. **Runtime:** the body-level call is a no-op. The static analysis already wired everything into the DAG; no runtime dispatch is needed.
+1. **Static (graph-build time):** an AST visitor reads `depends(name)` calls in the function source and adds DAG edges before any task runs. Plain and dotted names are resolved through the function's scope.
+2. **Runtime:** the body-level call is a no-op. The static analysis already wired everything into the DAG.
 
-For dynamic dependencies that can't be statically determined, use `@task(deps=[...])` - that resolution path accepts function objects and string fqns at registration time.
+For dependencies that can't be determined statically, use `@task(deps=[...])`. That path accepts function objects, string fqns, or a zero-arg callable returning them.
 
 ---
 
@@ -1101,7 +1109,7 @@ def test():
     shell("pytest")
 ```
 
-`propagate=True` (default) means a `codegen` miss invalidates `test` automatically. The generated files are also picked up by `test`'s own `inputs=` glob, so their content is tracked twice for safety.
+`propagate=True` (default) means a `codegen` miss invalidates `test`. The generated files are also picked up by `test`'s own `inputs=` glob, so their content is tracked twice for safety.
 
 ### 13.3 Env-sensitive caching
 
@@ -1129,7 +1137,7 @@ def release(version: str):
     shell("twine upload dist/*.whl")
 ```
 
-`ntask release --version=1.2.0 -j 16` still runs `release` alone after the in-flight DAG drains.
+`ntask -j 16 release --version=1.2.0` still runs `release` alone after the in-flight DAG drains.
 
 ### 13.5 Branch on captured output
 
@@ -1168,7 +1176,7 @@ prefix = "myproject/"
 ```bash
 pip install ntask[s3]
 ntask check            # first run populates remote
-ntask check --offline  # fast dev loop
+ntask --offline check  # fast dev loop
 ```
 
 **CI:**
@@ -1191,7 +1199,7 @@ ntask check --offline  # fast dev loop
 
 **Verify:** `ntask --why <task>`. If it says `HIT - no changes` and you expected a miss, the actual logic didn't change.
 
-**Force:** `ntask --force <task>`.
+**Force:** `ntask --force <task> <task>`.
 
 **Reset:** `ntask clean`.
 
@@ -1207,7 +1215,7 @@ ntask check --offline  # fast dev loop
 
 ### TUI renders garbled
 
-Try `ntask check --no-tui`. The TUI requires a terminal that handles modern ANSI sequences. Some multiplexers (`tmux`, `screen`) without `TERM=xterm-256color` and `COLORTERM=truecolor` may misrender.
+Try `ntask --no-tui check`. The TUI requires a terminal that handles modern ANSI sequences. Some multiplexers (`tmux`, `screen`) without `TERM=xterm-256color` and `COLORTERM=truecolor` may misrender.
 
 Permanent fix: `tui = false` in `[tool.ntask]`.
 
@@ -1219,13 +1227,13 @@ Permanent fix: `tui = false` in `[tool.ntask]`.
 
 **Check bucket / prefix:** match what's in `pyproject.toml`.
 
-**Offline fallback:** `ntask check --offline` skips remote entirely.
+**Offline fallback:** `ntask --offline check` skips remote entirely.
 
-**Retry behaviour:** none. ntask warns once and uses the local cache for the rest of the process. If the remote is genuinely flaky, fix it at the infrastructure level (transfer acceleration, VPC endpoint).
+**Retry behaviour:** none. ntask warns once and uses the local cache for the rest of the process. If the remote is flaky, fix it at the infrastructure level (transfer acceleration, VPC endpoint).
 
 ### Parallel logs are jumbled
 
-Under `-j > 1`, every line through `shell()` is prefixed `[fqn]` so lines don't interleave in confusing ways. `print()` in your task body is NOT prefixed - those writes go raw to stdout.
+Under `-j > 1`, every line through `shell()` is prefixed `[fqn]` so lines don't interleave in confusing ways. `print()` in your task body is NOT prefixed; those writes go raw to stdout.
 
 To label your own non-shell output:
 
@@ -1274,7 +1282,7 @@ def fn() -> None: ...
 def fn() -> None: ...
 ```
 
-Registers the function. `concurrency` keyword was deprecated in 0.3 and is removed in 1.0.
+Registers the function. The `concurrency` keyword was deprecated in 0.3; it is still accepted but has no effect.
 
 ### `cached`
 
@@ -1308,7 +1316,7 @@ Methods take no `self`. Group names must be non-empty and must not contain `.`.
 depends(*tasks: Callable | str) -> None
 ```
 
-Runtime no-op; static AST analysis lifts bare-name references into the DAG at registration time.
+Runtime no-op; static AST analysis turns plain and dotted name arguments into DAG edges at graph-build time. Anything else emits a `UserWarning`.
 
 ### `shell`
 
@@ -1344,16 +1352,16 @@ class ShellResult:
 ### `__version__`
 
 ```python
-__version__: str  # "1.0.0"
+__version__: str  # "1.1.5"
 ```
 
 ### Marker attributes
 
 ntask attaches three dunder attributes to decorated functions for runtime introspection:
 
-- `<fn>.__ntask_task__: str` - registered fqn
-- `<fn>.__ntask_cached_config__: CachedConfig` - present when `@cached` wrapped before `@task` ran
-- `<fn>.__ntask_group__: str | None` - present when wrapped inside `@group(...)`
+- `<fn>.__ntask_task__: str`: registered fqn
+- `<fn>.__ntask_cached_config__: CachedConfig`: present when `@cached` wrapped before `@task` ran
+- `<fn>.__ntask_group__: str | None`: present when wrapped inside `@group(...)`
 
 Read these for diagnostics; don't mutate them.
 
@@ -1365,7 +1373,7 @@ Read these for diagnostics; don't mutate them.
 
 **cache hit.** The computed cache key matches an entry in the local or remote store. The task is skipped; outputs are restored from the captured blob.
 
-**cache key.** A 128-bit xxh3 hash uniquely identifying a particular combination of task identity, inputs, environment, body, and upstream state.
+**cache key.** A 128-bit xxh3 hash identifying a particular combination of task identity, inputs, environment, body, and upstream state.
 
 **CacheBreakdown.** The structured record stored alongside each cache entry containing per-file input digests, env values, body hash, Python version, platform tag, and upstream keys. Used by `--why` to compute diffs.
 
@@ -1377,7 +1385,7 @@ Read these for diagnostics; don't mutate them.
 
 **DAG.** Directed Acyclic Graph. Used for execution order and reachability.
 
-**fqn.** Fully Qualified Name. `build` for a bare task; `ci.build` for a method inside `@group("ci")`.
+**fqn.** Fully qualified name. `build` for a bare task; `ci.build` for a method inside `@group("ci")`.
 
 **gitignore-style glob.** Pattern following `.gitignore` rules: `**` matches any path component, `!` negates, directory prefixes match recursively. Implemented by `pathspec` in `gitwildmatch` mode.
 
@@ -1395,11 +1403,11 @@ Read these for diagnostics; don't mutate them.
 
 **remote cache.** Shared cache backend (S3, GCS, HTTP, local-fs) from which teams and CI can read and write. Transparent to the task author.
 
-**run-id.** Timestamp string `YYYYMMDD-HHMMSS-mmm` used as the directory name for per-run TUI logs.
+**run-id.** UTC timestamp string `YYYYMMDDTHHMMSS-mmmZ` used as the directory name for per-run logs.
 
 **strict mode.** When `strict=True` (default), the cache key includes body hash, Python version, and platform tag. When `False`, those three are replaced with placeholders to allow cross-platform / cross-version cache sharing.
 
-**transitive key propagation.** A downstream task's key includes its upstream dependencies' keys, so any upstream change invalidates the downstream automatically.
+**transitive key propagation.** A downstream task's key includes its upstream dependencies' keys, so any upstream change invalidates the downstream task.
 
 **toposort.** Topological sort of the DAG (Kahn's algorithm). Produces a stable order where each task appears after all its dependencies.
 

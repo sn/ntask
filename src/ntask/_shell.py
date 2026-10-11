@@ -23,7 +23,7 @@ _current_log_file: ContextVar[Path | None] = ContextVar(
 # When True, shell() routes subprocess stdout/stderr directly to
 # _current_log_file with no terminal output. The executor enables this
 # under the TUI (where Textual owns the screen); the line renderers keep
-# it False so prefixed/direct terminal output still works as before.
+# it False so output still reaches the terminal, prefixed or not.
 _current_silent_capture: ContextVar[bool] = ContextVar(
     "_current_silent_capture", default=False
 )
@@ -64,7 +64,7 @@ def _run_prefixed(
     cwd: str | Path | None,
     env: dict[str, str] | None,
 ) -> int:
-    """Run a command with stdout/stderr line-prefixed by task FQN.
+    """Run a command with stdout/stderr line-prefixed by task fqn.
 
     Uses subprocess.Popen with line-buffered text pipes and background
     threads to pump output. Works from any context (sync task or async task).
@@ -164,15 +164,21 @@ def shell(
 ) -> ShellResult | None:
     """Run a shell command.
 
-    - String ``cmd`` runs via /bin/sh -c (or cmd.exe /c on Windows).
+    - String ``cmd`` runs through the system shell (``subprocess`` with
+      ``shell=True``: /bin/sh -c on POSIX, ``%COMSPEC%`` /c, normally
+      cmd.exe, on Windows).
     - List ``cmd`` bypasses the shell (direct exec).
     - ``check=True`` (default) raises ShellError on non-zero exit.
-    - ``capture=True`` returns a ShellResult; stdout/stderr are captured.
-    - Default streams output live; returns None on success.
-    - When invoked under parallel execution (the executor sets the
+    - ``capture=True`` returns a ShellResult with stdout/stderr captured.
+    - Otherwise output streams live. Returns None when ``check=True``;
+      with ``check=False`` returns a ShellResult whose stdout/stderr are
+      empty.
+    - Under the TUI (the executor sets ``_current_silent_capture``),
+      output goes only to the per-task log file.
+    - Under parallel execution without the TUI (the executor sets the
       ``_current_line_prefix`` context var), output is line-prefixed with
-      the task FQN in square brackets. Otherwise (concurrency==1 or
-      direct sync call), behavior is byte-identical to 0.2.0.
+      the task fqn in square brackets. Otherwise (concurrency 1, or a
+      direct call outside the executor) stdout/stderr are inherited.
     """
     use_shell = isinstance(cmd, str)
     full_env = None if env is None else {**os.environ, **env}
@@ -197,7 +203,7 @@ def shell(
         return result
 
     # Silent log mode - pipe stdout+stderr to a file (append), no terminal
-    # output. Only used when explicitly requested (TUI owns the screen).
+    # output. Only enabled under the TUI, which owns the screen.
     log_path = _current_log_file.get()
     if log_path is not None and _current_silent_capture.get():
         rc = _run_to_logfile(
@@ -216,7 +222,6 @@ def shell(
             )
         return None
 
-    # Streaming mode - check context var for prefix.
     prefix = _current_line_prefix.get()
 
     if prefix is not None:
@@ -232,7 +237,7 @@ def shell(
             )
         return None
 
-    # No prefix - current behavior (sync subprocess.run, inherited stdout/err).
+    # No prefix: inherit stdout/stderr.
     proc = subprocess.run(  # noqa: S603
         cmd, shell=use_shell, cwd=cwd, env=full_env, text=True,
     )

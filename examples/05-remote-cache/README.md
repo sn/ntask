@@ -8,15 +8,15 @@ A shared cache that multiple clones read through and write through.
 ```bash
 echo "hello from the first clone" > input.txt
 rm -rf .ntask /tmp/ntask-team-cache
-ntask transform                   # ~2s - cache miss; writes to local + /tmp cache
-ntask transform                   # instant - local hit
+ntask transform                   # ~2s: cache miss; writes to local + /tmp cache
+ntask transform                   # instant: local hit
 ```
 
 Now simulate a fresh clone:
 
 ```bash
 rm -rf .ntask                     # wipe LOCAL cache only
-ntask transform                   # instant - local miss, remote HIT, output.txt restored
+ntask transform                   # instant: local miss, remote HIT, output.txt restored
 ```
 
 ## What to notice

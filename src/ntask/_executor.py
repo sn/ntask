@@ -38,13 +38,14 @@ class ExecutionConfig:
     keep_going: bool = False
     offline: bool = False
     renderer: Any = None
-    # Per-run log directory; if None, defaults to <root>/.ntask/runs/<run-id>.
+    # Parent of the per-run log directories; each run writes to
+    # <log_dir>/<run-id>. If None, defaults to <root>/.ntask/runs.
     log_dir: Path | None = None
     # Number of recent run directories to retain; older ones are pruned at
     # run start. Set to 0 to disable retention.
     max_runs: int = DEFAULT_MAX_RUNS
-    # Traceback formatting mode for failures. ``none`` mirrors the pre-1.2
-    # behaviour (renderer's one-line summary only).
+    # Traceback formatting mode for failures. ``none`` leaves the
+    # renderer's one-line summary as the only output.
     tb: TbMode = "short"
 
 
@@ -54,11 +55,12 @@ class RunResult:
     cached: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
-    # Per-task wall-clock seconds; only populated for tasks that ran (not
-    # cached/skipped).
+    # Per-task wall-clock seconds; only populated for tasks that ran and
+    # succeeded (not failed, cached or skipped).
     durations: dict[str, float] = field(default_factory=dict)
-    # Per-task captured-log path, relative to the run dir; absent for tasks
-    # that produced no output.
+    # Per-task log file name, relative to the run dir. Set for every task
+    # that got past the cache check (ran or failed); the file itself may not
+    # exist if the task wrote nothing.
     log_paths: dict[str, str] = field(default_factory=dict)
     # The directory holding per-task logs + run.json for this invocation.
     run_dir: Path | None = None
@@ -357,7 +359,7 @@ def _prune_old_runs(runs_root: Path, *, keep: int, current: Path) -> None:
     except OSError:
         return
     # Directory names sort chronologically because the run-id format is
-    # `YYYYMMDDTHHMMSS-fff Z`. Newest last.
+    # `YYYYMMDDTHHMMSS-fffZ`. Newest last.
     entries.sort(key=lambda p: p.name)
     # `keep` is the budget *including* the current run, so we drop everything
     # but the (keep - 1) newest historical runs.

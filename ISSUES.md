@@ -1,6 +1,6 @@
 # Open issues / follow-ups
 
-Tracks issues discovered while working through other punch-list items
+Issues discovered while working through other punch-list items
 that weren't bundled into those PRs.
 
 ## `--graph <TARGET>` ignores the target for mermaid / dot output

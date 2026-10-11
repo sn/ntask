@@ -18,7 +18,7 @@ ntask -j 3 ship                # builds in parallel, then deploy runs solo
 - The default is `-j 1` (sequential). Opt in to parallelism per invocation;
   there's no "parallel by default" footgun.
 - Under `-j > 1`, `shell()` output is auto-prefixed with `[fqn]` so parallel
-  logs stay readable. `print()` output isn't prefixed - wrap anything
+  logs stay readable. `print()` output isn't prefixed: wrap anything
   interactive in `shell()` or accept the interleave.
 - `@task(parallel=False)` is a **DAG-wide barrier**, not a per-task
   serialization knob. When `deploy` is ready to run, the executor first

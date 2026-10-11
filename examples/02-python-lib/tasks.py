@@ -42,5 +42,5 @@ def check():
     outputs=["dist/"],
 )
 def build():
-    """Build the wheel. Outputs listed so cache hits restore dist/."""
+    """Build the sdist and wheel. Outputs listed so cache hits restore dist/."""
     shell("python -m build")

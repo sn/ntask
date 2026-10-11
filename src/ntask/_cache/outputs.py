@@ -12,8 +12,9 @@ from .hash import hash_many, hash_many_files
 class OutputStore:
     """Content-addressed output blob store.
 
-    Layout: ``<root>/outputs/<outputs-hash>/...`` - preserving relative paths.
-    Restore uses hardlinks on POSIX, falls back to copy on Windows or cross-fs.
+    Layout: ``<root>/outputs/<outputs-hash>/...``, preserving relative paths.
+    Capture and restore hardlink files where possible and fall back to
+    copying when linking fails (e.g. across filesystems).
     """
 
     def __init__(self, root: Path):

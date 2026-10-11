@@ -42,7 +42,7 @@ def check():
     outputs=["dist/"],
 )
 def build():
-    """Build the wheel."""
+    """Build the sdist and wheel."""
     shell("python -m build")
 
 

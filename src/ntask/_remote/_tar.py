@@ -1,4 +1,4 @@
-"""Deterministic tar.gz creation + atomic extraction."""
+"""Normalised tar.gz creation + staged extraction."""
 from __future__ import annotations
 
 import io
@@ -8,10 +8,12 @@ from pathlib import Path
 
 
 def tar_directory(source_dir: Path) -> bytes:
-    """Tar+gzip ``source_dir`` deterministically.
+    """Tar+gzip ``source_dir`` with normalised member metadata.
 
     Entries sorted alphabetically by relative path; mtime=0; uid=gid=0;
     uname=gname=""; only regular files included (dirs are inferred from paths).
+    The gzip header still records the current time, so the compressed bytes
+    differ between calls even for identical input.
     Returns the in-memory tar.gz bytes.
     """
     buf = io.BytesIO()
@@ -32,10 +34,12 @@ def tar_directory(source_dir: Path) -> bytes:
 
 
 def extract_tar(data: bytes, dest_dir: Path) -> None:
-    """Extract a tar.gz into ``dest_dir`` via a temp staging dir + atomic rename.
+    """Extract a tar.gz into ``dest_dir`` via a temp staging dir.
 
-    If extraction fails partway, the staging dir is cleaned up and dest_dir
-    is not mutated.
+    Each top-level entry is then renamed into ``dest_dir``, replacing any
+    existing entry of the same name. If extraction fails, the staging dir is
+    cleaned up and ``dest_dir``'s contents are untouched (it is still created
+    if missing); a failure during the renames can leave it partly updated.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     staging = dest_dir.parent / f".{dest_dir.name}.staging.{uuid.uuid4().hex[:8]}"
@@ -47,7 +51,6 @@ def extract_tar(data: bytes, dest_dir: Path) -> None:
             # absolute paths. Remote backends fetch attacker-influenceable
             # bytes, so this is load-bearing — not just future-proofing.
             tar.extractall(staging, filter="data")
-        # Move contents of staging into dest_dir
         for p in staging.iterdir():
             target = dest_dir / p.name
             if target.exists():

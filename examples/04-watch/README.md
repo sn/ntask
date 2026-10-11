@@ -8,8 +8,8 @@
 ntask watch test
 ```
 
-Leave the watcher running, then in another shell edit `src/test_app.py` -
-add a new test, break an assertion, whatever. The watcher will:
+Leave the watcher running, then in another shell edit `src/test_app.py`
+(add a new test, break an assertion, whatever). The watcher will:
 
 1. Clear the screen
 2. Print a status header naming the file that changed
@@ -19,9 +19,9 @@ add a new test, break an assertion, whatever. The watcher will:
 ## What to notice
 
 - Only `@cached` tasks are watchable. `ntask watch` on a non-cached task
-  exits with an error - the watcher needs the `inputs` glob to know what
+  exits with an error, because the watcher needs the `inputs` glob to know what
   files to observe.
-- File events during a run are **queued**, not dropped - a single rerun is
+- File events during a run are **queued**, not dropped. A single rerun is
   scheduled after the current one completes. Successive saves collapse
   into one follow-up run.
 - Filtering respects `.gitignore`. Editor-backup files (`.swp`, `~`,

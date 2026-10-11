@@ -226,5 +226,5 @@ You can read these for introspection. Don't mutate them.
 ## Version
 
 ```python
-ntask.__version__   # "1.1.3"
+ntask.__version__   # "1.1.5"
 ```

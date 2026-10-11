@@ -123,9 +123,10 @@ def scan_depends(func: Callable[..., Any]) -> tuple[list[str], bool]:
 def scan_static_depends(func: Callable[..., Any]) -> list[str] | Literal["dynamic"]:
     """Return the names of tasks referenced by static ``depends(a, b)`` calls in ``func``.
 
-    If any ``depends(...)`` call uses starred/unpacked/non-Name arguments,
-    returns the string ``"dynamic"``. See ``scan_depends`` for a variant that
-    keeps the static names alongside the dynamic flag.
+    If any ``depends(...)`` call has an argument that isn't a plain or dotted
+    name (starred, a call, a literal...), returns the string ``"dynamic"``.
+    See ``scan_depends`` for a variant that keeps the static names alongside
+    the dynamic flag.
     """
     names, dynamic = scan_depends(func)
     if dynamic:

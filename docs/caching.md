@@ -172,7 +172,7 @@ The line renderer prints the first item inline (`x test: cache miss (input-modif
 | Command | Effect |
 |---|---|
 | `ntask --no-cache` | Don't read or write the cache for this invocation. |
-| `ntask --force <task>` | Bypass the cache for that task's lookup; still write a new entry on success. |
+| `ntask --force <task> <target>` | Bypass the cache lookup for `<task>` while running `<target>`; still write a new entry on success. |
 | `ntask clean` | Delete `.ntask/cache/`. Output blobs survive. |
 | `ntask clean --all` | Delete the entire `.ntask/` directory. |
 
