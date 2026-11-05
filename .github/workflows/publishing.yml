@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/hexcraft/
+      url: https://pypi.org/p/ntask/
     needs:
       - release-build
 
