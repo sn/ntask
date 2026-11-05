@@ -158,7 +158,7 @@ async def test_watch_catches_task_failure_and_continues(tmp_path: Path):
 async def test_watch_rerun_cache_hits_when_content_unchanged(tmp_path: Path):
     """A watch event for a file whose content didn't actually change should
     result in a cache HIT on the rerun, not a forced re-execution. This is
-    the documented behavior per spec §6.2."""
+    the documented behaviour per spec §6.2."""
     (tmp_path / "x.py").write_text("v1")
     runs = {"build": 0}
 

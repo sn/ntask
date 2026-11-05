@@ -10,7 +10,7 @@ import anyio
 
 
 class _ParallelCoordinator:
-    """Gate task entry so exclusive (parallel=False) tasks serialize with siblings."""
+    """Gate task entry so exclusive (parallel=False) tasks serialise with siblings."""
 
     def __init__(self) -> None:
         self._lock = anyio.Lock()

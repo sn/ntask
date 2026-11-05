@@ -85,7 +85,7 @@ Don't use `strict=False` for code-execution tasks where the binary you produce d
 
 ## Inputs
 
-`inputs=[...]` is a list of gitignore-style glob patterns. Behavior:
+`inputs=[...]` is a list of gitignore-style glob patterns. Behaviour:
 
 - Matched against every file under the project root using `pathspec` in `gitwildmatch` mode.
 - `.gitignore` is consulted if present; ignored files are removed from the matched set.
@@ -117,7 +117,7 @@ Effects:
 
 ## Env
 
-`env=["NAME1", "NAME2"]` includes the named environment variables' values in the cache key. Unset variables contribute the string `<unset>`. Use this when a task's behavior actually depends on env (CI flag, target arch, build env).
+`env=["NAME1", "NAME2"]` includes the named environment variables' values in the cache key. Unset variables contribute the string `<unset>`. Use this when a task's behaviour actually depends on env (CI flag, target arch, build env).
 
 Don't include every env var "to be safe": most env churn is irrelevant noise that disables your cache.
 
@@ -191,5 +191,5 @@ Things ntask deliberately ignores:
 ## Performance notes
 
 - xxh3_128 is roughly 10x faster than SHA-256 on modern hardware. Hashing isn't typically the bottleneck.
-- File hashing is parallelized via a `ThreadPoolExecutor`.
+- File hashing is parallelised via a `ThreadPoolExecutor`.
 - For large outputs (gigabyte+), capture is a content-addressed copy on disk; remote upload constructs the tarball in memory and may pressure RAM. The remote tarball is deterministic (sorted entries, mtime=0), so identical outputs share storage on the remote too.

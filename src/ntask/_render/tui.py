@@ -94,7 +94,7 @@ class _DAGApp(App[None]):
         tree.root.expand()
         for fqn in toposort(graph):
             deps = graph.direct_deps(fqn)
-            # Tree visualization of a DAG: each node shown under its first
+            # Tree visualisation of a DAG: each node shown under its first
             # declared dep; additional deps aren't drawn as extra edges.
             parent = (
                 self._task_nodes[deps[0]]

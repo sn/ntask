@@ -90,7 +90,7 @@ def task(
         import warnings
         warnings.warn(
             f"@task(concurrency={concurrency!r}) is deprecated and has no "
-            f"effect; use parallel=False to serialize a task with its "
+            f"effect; use parallel=False to serialise a task with its "
             f"siblings. The concurrency argument will be removed in a "
             f"future release.",
             DeprecationWarning,

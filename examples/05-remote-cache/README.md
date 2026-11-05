@@ -55,7 +55,7 @@ type = "gcs"
 bucket = "my-team-build-cache"
 prefix = "ntask/"
 
-# HTTP (core; any server that honors GET + PUT)
+# HTTP (core; any server that honours GET + PUT)
 [tool.ntask.remote_cache]
 type = "http"
 url = "https://cache.internal/ntask"

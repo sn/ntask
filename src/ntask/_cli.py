@@ -91,7 +91,7 @@ Flags:
   --keep-going            Continue on failure
   -v, --verbose           Stream all output
   -q, --quiet             Suppress cache-hit lines
-  --no-color              Disable color
+  --no-color              Disable colour
   --no-tui                Disable the TUI; use the line-based renderer
   --log-dir DIR           Directory for per-run log dirs (default <root>/.ntask/runs)
   --max-runs N            Retain only the N most recent run dirs (default 50)

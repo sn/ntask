@@ -21,7 +21,7 @@ ntask -j 3 ship                # builds in parallel, then deploy runs solo
   logs stay readable. `print()` output isn't prefixed: wrap anything
   interactive in `shell()` or accept the interleave.
 - `@task(parallel=False)` is a **DAG-wide barrier**, not a per-task
-  serialization knob. When `deploy` is ready to run, the executor first
+  serialisation knob. When `deploy` is ready to run, the executor first
   waits for every in-flight task across the DAG to finish, then runs
   `deploy` alone.
 - `stdin` under `-j > 1` is `/dev/null`. If a task needs a TTY (pdb,
