@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 
 def test_watch_reruns_on_file_edit_end_to_end(tmp_path: Path):
     """A real file edit during watch triggers a rerun within a few seconds."""
@@ -73,3 +75,38 @@ def test_watch_reruns_on_file_edit_end_to_end(tmp_path: Path):
     # when the runtime propagates SIGBREAK out of the process.
     assert proc.returncode in (0, 130, 0xC000013A), \
         f"unexpected exit {proc.returncode}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGINT delivery differs on Windows")
+def test_watch_exits_on_sigint_during_a_run(tmp_path: Path):
+    """Ctrl-C while the task is still running must stop watch, not keep watching."""
+    (tmp_path / "tasks.py").write_text(
+        "import time\n"
+        "from pathlib import Path\n"
+        "from ntask import task, cached\n"
+        "@task\n"
+        "@cached(inputs=['x.py'])\n"
+        "def build():\n"
+        "    Path('started').write_text('1')\n"
+        "    time.sleep(3)\n"
+    )
+    (tmp_path / "x.py").write_text("v1")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "ntask", "--no-tui", "watch", "build"],
+        cwd=tmp_path,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not (tmp_path / "started").exists():
+            time.sleep(0.05)
+        assert (tmp_path / "started").exists(), "task never started"
+        proc.send_signal(signal.SIGINT)
+        _, err = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        _, err = proc.communicate()
+        pytest.fail(f"watch kept running after SIGINT; stderr: {err.decode()[-300:]!r}")
+    assert proc.returncode in (0, 130), f"unexpected exit {proc.returncode}"
+    assert b"run failed" not in err

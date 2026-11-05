@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pathspec
 
 from ._cache.manifest import _load_gitignore
@@ -88,7 +89,10 @@ async def _run_once(
     try:
         await executor.run([task_obj.fqn], {task_obj.fqn: task_kwargs})
     except BaseException as e:
-        if isinstance(e, KeyboardInterrupt):
+        # Under anyio.run, Ctrl-C reaches this coroutine as a cancellation,
+        # not as KeyboardInterrupt. Swallowing it here kept the loop watching
+        # and left the process running after Ctrl-C.
+        if isinstance(e, (KeyboardInterrupt, anyio.get_cancelled_exc_class())):
             raise
         print(
             f"watch: run failed ({type(e).__name__}). Waiting for changes...",

@@ -14,6 +14,9 @@ this project uses semantic versioning.
   content so you can still read it. Polls every ~150ms.
 
 ### Fixed
+- `ntask watch` now exits on Ctrl-C pressed while a run is in progress. The
+  interrupt was reported as `watch: run failed (CancelledError)` and watch
+  kept running.
 - Remote cache entries are validated before use. A malformed or malicious
   entry could make ntask write or read outside `.ntask/` (via a crafted key
   or output hash); such entries are now rejected and the task runs instead.

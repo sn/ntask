@@ -178,3 +178,26 @@ async def test_watch_rerun_cache_hits_when_content_unchanged(tmp_path: Path):
         "Expected cache-hit on rerun: runs should stay at 1 because x.py content "
         "was unchanged (same bytes). force=True would incorrectly increment to 2."
     )
+
+
+async def test_watch_cancellation_during_run_stops_the_loop(tmp_path: Path):
+    # Under anyio.run, Ctrl-C arrives as a cancellation. It must end the
+    # loop, not be reported as a failed run and swallowed.
+    import anyio
+
+    (tmp_path / "x.py").write_text("v1")
+
+    @task
+    @cached(inputs=["x.py"])
+    async def build():
+        await anyio.sleep(10)
+
+    t = default_registry().get("build")
+    cfg = ExecutionConfig(root=tmp_path, concurrency=1)
+    with anyio.move_on_after(0.3) as scope:
+        await watch_loop(
+            task_obj=t, task_kwargs={}, workspace=tmp_path, config=cfg,
+            awatch_factory=_make_awatch_factory(),
+        )
+        pytest.fail("watch_loop swallowed the cancellation")
+    assert scope.cancelled_caught
