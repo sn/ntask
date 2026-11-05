@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import sys
 import time
@@ -16,6 +17,8 @@ from .outputs import OutputStore
 from .store import CacheEntry, CacheStore
 
 _remote_warn_fired = False
+
+_HEX_DIGEST = re.compile(r"[0-9a-f]{1,128}")
 
 
 def _warn_once_remote_failed(e: BaseException) -> None:
@@ -157,6 +160,14 @@ class CacheEngine:
             entry = CacheEntry.from_dict(entry_dict)
         except Exception as e:
             _warn_once_remote_failed(e)
+            return None
+        # The remote is untrusted input: its key and outputs_hash become
+        # local paths (cache/<fqn>/<key>.json, outputs/<hash>/), so reject
+        # anything that isn't the key we asked for or a plain hex digest.
+        if entry.key != key or (
+            entry.outputs_hash is not None and not _HEX_DIGEST.fullmatch(entry.outputs_hash)
+        ):
+            _warn_once_remote_failed(ValueError(f"malformed remote cache entry for {t.fqn!r}"))
             return None
         # Download outputs into the content-addressed store if needed.
         if entry.outputs_hash is not None:

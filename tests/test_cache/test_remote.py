@@ -144,3 +144,24 @@ def test_restore_outputs_reports_missing_blob(tmp_path: Path):
     engine = CacheEngine(root=tmp_path / ".ntask")
     entry = replace(_sample_entry(), outputs_hash="gone")
     assert engine.restore_outputs(entry, workspace=tmp_path) is False
+
+
+def test_check_remote_rejects_path_traversal_in_outputs_hash(tmp_path: Path):
+    from dataclasses import replace
+
+    entry = replace(_sample_entry(), outputs_hash="../../escape")
+    remote = MagicMock()
+    remote.get_entry.return_value = entry.to_dict()
+    engine = CacheEngine(root=tmp_path / ".ntask", remote=remote)
+    assert engine.check_remote(_sample_task(), "k1") is None
+    remote.get_output.assert_not_called()
+    assert not (tmp_path / "escape").exists()
+
+
+def test_check_remote_rejects_entry_with_different_key(tmp_path: Path):
+    entry = _sample_entry(key="../../../evil")
+    remote = MagicMock()
+    remote.get_entry.return_value = entry.to_dict()
+    engine = CacheEngine(root=tmp_path / ".ntask", remote=remote)
+    assert engine.check_remote(_sample_task(), "k1") is None
+    assert not (tmp_path / ".ntask" / "cache").exists()

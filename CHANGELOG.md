@@ -14,6 +14,12 @@ this project uses semantic versioning.
   content so you can still read it. Polls every ~150ms.
 
 ### Fixed
+- Remote cache entries are validated before use. A malformed or malicious
+  entry could make ntask write or read outside `.ntask/` (via a crafted key
+  or output hash); such entries are now rejected and the task runs instead.
+- `[tool.ntask].cache_dir` must be a subdirectory of the project. A value
+  like `"."` or `".."` falls back to `.ntask` with a warning, so
+  `ntask clean --all` can't delete the project or its parent.
 - `--keep-going`: a skipped task's dependents are now skipped too. Previously
   only the first level below a failure was skipped and everything further
   down still ran.

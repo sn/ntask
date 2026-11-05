@@ -648,3 +648,12 @@ async def test_executor_honours_cache_dir_setting(tmp_path: Path):
     assert (tmp_path / "build" / "cache" / "cache" / "build").is_dir()
     assert (tmp_path / "build" / "cache" / "runs").is_dir()
     assert not (tmp_path / ".ntask").exists()
+
+
+@pytest.mark.parametrize("bad", [".", "..", "../elsewhere", "/var/cache/ntask"])
+def test_cache_dir_outside_project_falls_back_to_default(tmp_path: Path, bad: str):
+    from ntask._config import resolve_cache_dir
+
+    (tmp_path / "pyproject.toml").write_text(f'[tool.ntask]\ncache_dir = "{bad}"\n')
+    with pytest.warns(UserWarning, match="subdirectory of the project root"):
+        assert resolve_cache_dir(tmp_path) == tmp_path / ".ntask"

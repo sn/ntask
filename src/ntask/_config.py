@@ -68,8 +68,24 @@ def resolve_cache_dir(project_root: Path) -> Path:
     Relative values resolve against ``project_root``. An unreadable
     pyproject falls back to the default ``.ntask``.
     """
+    default = project_root / ".ntask"
     try:
         cfg = load_project_config(project_root)
     except Exception:
-        return project_root / ".ntask"
-    return project_root / cfg.cache_dir
+        return default
+    candidate = project_root / cfg.cache_dir
+    # `ntask clean --all` rmtrees this directory, so it must sit strictly
+    # inside the project: "." or ".." would delete the project or its parent.
+    root = project_root.resolve()
+    resolved = candidate.resolve()
+    if resolved == root or not resolved.is_relative_to(root):
+        import warnings
+
+        warnings.warn(
+            f"[tool.ntask].cache_dir = {cfg.cache_dir!r} must be a subdirectory "
+            f"of the project root; using '.ntask' instead.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return default
+    return candidate
