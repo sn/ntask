@@ -54,3 +54,38 @@ def test_manifest_empty_globs_produces_stable_empty_hash(tmp_path: Path):
     manifest = compute_input_manifest([], root=tmp_path)
     assert manifest.files == []
     assert manifest.digest == compute_input_manifest([], root=tmp_path).digest
+
+
+def test_walk_prefixes_anchored_and_unanchored():
+    from ntask._cache.manifest import _walk_prefixes
+
+    assert _walk_prefixes(["src/**/*.py", "src/pkg/x.py", "docs/a/b.md"]) == ["docs/a", "src"]
+    assert _walk_prefixes(["*.py"]) == [""]
+    assert _walk_prefixes(["dist/"]) == [""]
+    assert _walk_prefixes(["src/*.py", "!src/skip.py"]) == ["src"]
+    assert _walk_prefixes(["*/x.py"]) == [""]
+
+
+def test_manifest_skips_gitignored_dirs_and_cache_dir(tmp_path: Path):
+    from ntask._cache.manifest import compute_input_manifest
+
+    (tmp_path / ".gitignore").write_text("venv/\n")
+    for rel in ["a.py", "venv/lib/b.py", ".ntask/outputs/h/c.py", ".git/d.py"]:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+    m = compute_input_manifest(["**/*.py"], root=tmp_path, exclude=(tmp_path / ".ntask",))
+    assert [f.path.relative_to(tmp_path).as_posix() for f in m.files] == ["a.py"]
+
+
+def test_manifest_anchored_pattern_matches_same_files_as_full_walk(tmp_path: Path):
+    from ntask._cache.manifest import compute_input_manifest
+
+    for rel in ["src/a.py", "src/pkg/b.py", "other/c.py", "src/readme.md"]:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+    m = compute_input_manifest(["src/**/*.py"], root=tmp_path)
+    assert sorted(f.path.relative_to(tmp_path).as_posix() for f in m.files) == [
+        "src/a.py", "src/pkg/b.py",
+    ]

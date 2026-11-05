@@ -32,7 +32,10 @@ def discover(start: Path) -> Path:
             f"no tasks.py or tasks/ package found from {start} upward"
         )
 
-    if (root / "tasks").is_dir():
+    # Must mirror find_project_root: a tasks/ dir only counts as the tasks
+    # package when it has __init__.py. Otherwise it's an unrelated folder
+    # (data, templates...) sitting next to tasks.py.
+    if (root / "tasks" / "__init__.py").is_file():
         target = root / "tasks" / "__init__.py"
         module_name = "_ntask_user_tasks_pkg"
     else:

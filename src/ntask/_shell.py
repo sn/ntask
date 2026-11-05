@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import os
 import subprocess
 import sys
@@ -79,13 +80,22 @@ def _run_prefixed(
         stderr=subprocess.PIPE,
         bufsize=1,
         text=True,
+        errors="replace",
     )
     tag = f"[{prefix}] "
+    # Plain threads start with an empty contextvars context, which would hide
+    # the executor's per-task log file from the sys.stdout/sys.stderr tee.
+    # Run each pump in its own copy of the caller's context (one copy per
+    # thread: a Context can't be entered by two threads at once).
     t_out = threading.Thread(
-        target=_pump, args=(proc.stdout, sys.stdout, tag), daemon=True
+        target=contextvars.copy_context().run,
+        args=(_pump, proc.stdout, sys.stdout, tag),
+        daemon=True,
     )
     t_err = threading.Thread(
-        target=_pump, args=(proc.stderr, sys.stderr, tag), daemon=True
+        target=contextvars.copy_context().run,
+        args=(_pump, proc.stderr, sys.stderr, tag),
+        daemon=True,
     )
     t_out.start()
     t_err.start()
@@ -188,7 +198,7 @@ def shell(
     if capture:
         proc = subprocess.run(  # noqa: S603
             cmd, shell=use_shell, cwd=cwd, env=full_env,
-            capture_output=True, text=True,
+            capture_output=True, text=True, errors="replace",
         )
         duration = time.perf_counter() - started
         result = ShellResult(

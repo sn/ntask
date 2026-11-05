@@ -58,3 +58,16 @@ def test_import_error_in_tasks_py_raises_discovery_error(tmp_path: Path):
     (tmp_path / "tasks.py").write_text("import nonexistent_module_xyz\n")
     with pytest.raises(DiscoveryError, match=r"failed to import"):
         discover(tmp_path)
+
+
+def test_tasks_py_wins_over_plain_tasks_folder(tmp_path: Path):
+    # A tasks/ folder without __init__.py (data, templates) isn't the package.
+    (tmp_path / "tasks.py").write_text(
+        "from ntask import task\n"
+        "@task\n"
+        "def hello(): pass\n"
+    )
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "data.json").write_text("{}")
+    assert discover(tmp_path) == tmp_path
+    assert "hello" in default_registry().fqns()

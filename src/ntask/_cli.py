@@ -150,7 +150,8 @@ def _handle_completion_flags(fqn: str) -> int:
 
 def _handle_clean(root: Path, clean_all: bool) -> int:
     from ._cache.store import CacheStore
-    store = CacheStore(root=root / ".ntask")
+    from ._config import resolve_cache_dir
+    store = CacheStore(root=resolve_cache_dir(root))
     if clean_all:
         store.clear_all()
     else:
@@ -175,7 +176,8 @@ def _handle_why(root: Path, fqn: str) -> int:
         print(f"error: task {fqn!r} is not a cached task", file=sys.stderr)
         return 1
 
-    engine = CacheEngine(root=root / ".ntask")
+    from ._config import resolve_cache_dir
+    engine = CacheEngine(root=resolve_cache_dir(root))
     prior = engine.store.latest(fqn)
 
     if prior is None:
@@ -501,10 +503,12 @@ def main(argv: list[str] | None = None) -> int:
     if tui_app is not None:
         import threading
         exc_holder: list[BaseException | None] = [None]
+        failed_holder: list[bool] = [False]
 
         def _run_executor() -> None:
             try:
                 result = anyio.run(executor.run, [target], {target: kwargs})
+                failed_holder[0] = bool(result.failed)
                 renderer.summary(
                     ran=len(result.ran), cached=len(result.cached),
                     failed=len(result.failed), skipped=len(result.skipped),
@@ -524,7 +528,7 @@ def main(argv: list[str] | None = None) -> int:
             print(renderer.final_summary)
         if exc_holder[0] is not None:
             raise exc_holder[0]
-        return 0
+        return 1 if failed_holder[0] else 0
     else:
         try:
             result = anyio.run(executor.run, [target], {target: kwargs})

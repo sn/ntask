@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import platform
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -53,7 +54,9 @@ class CacheEngine:
     ) -> tuple[str, CacheBreakdown]:
         cfg = t.cached_config
         assert cfg is not None
-        manifest = compute_input_manifest(cfg.inputs, root=workspace)
+        # Never treat ntask's own state (cache entries, output blobs, run
+        # logs) as task inputs, even if the user didn't gitignore it.
+        manifest = compute_input_manifest(cfg.inputs, root=workspace, exclude=(self.root,))
         body = hash_task_body(t.func)
         env_values = {
             name: os.environ[name] if name in os.environ else "<unset>"
@@ -125,9 +128,19 @@ class CacheEngine:
         self.store.put(t.fqn, entry)
         return entry
 
-    def restore_outputs(self, entry: CacheEntry, *, workspace: Path) -> None:
-        if entry.outputs_hash:
+    def restore_outputs(self, entry: CacheEntry, *, workspace: Path) -> bool:
+        """Restore ``entry``'s outputs into ``workspace``.
+
+        Returns False (treat as a cache miss) when the output blob is gone,
+        e.g. ``.ntask/outputs`` was deleted by hand.
+        """
+        if not entry.outputs_hash:
+            return True
+        try:
             self.outputs.restore(entry.outputs_hash, root=workspace)
+        except FileNotFoundError:
+            return False
+        return True
 
     def check_remote(self, t: Task, key: str) -> CacheEntry | None:
         """Try remote: if hit, download entry + outputs and populate local store."""
@@ -135,7 +148,7 @@ class CacheEngine:
             return None
         try:
             entry_dict = self._remote.get_entry(t.fqn, key)
-        except BaseException as e:
+        except Exception as e:
             _warn_once_remote_failed(e)
             return None
         if entry_dict is None:
@@ -148,12 +161,21 @@ class CacheEngine:
         # Download outputs into the content-addressed store if needed.
         if entry.outputs_hash is not None:
             target_dir = self.outputs._hash_dir(entry.outputs_hash)
-            if not target_dir.exists():
+            if not target_dir.is_dir():
+                # Download into a staging dir and rename it into place, so a
+                # failed or interrupted download can't leave a partial blob
+                # that a later run would trust as complete.
+                self.outputs.outputs_dir.mkdir(parents=True, exist_ok=True)
+                staging = self.outputs.staging_dir(entry.outputs_hash)
                 try:
-                    self._remote.get_output(entry.outputs_hash, target_dir)
-                except BaseException as e:
+                    self._remote.get_output(entry.outputs_hash, staging)
+                    self.outputs.commit_staged(staging, entry.outputs_hash)
+                except Exception as e:
                     _warn_once_remote_failed(e)
                     return None
+                finally:
+                    if staging.exists():
+                        shutil.rmtree(staging, ignore_errors=True)
         # Mirror the entry into local store so future runs short-circuit.
         self.store.put(t.fqn, entry)
         return entry
@@ -164,7 +186,7 @@ class CacheEngine:
             return
         try:
             self._remote.put_entry(t.fqn, entry.key, entry.to_dict())
-        except BaseException as e:
+        except Exception as e:
             _warn_once_remote_failed(e)
             return
         if entry.outputs_hash is not None:
@@ -172,6 +194,6 @@ class CacheEngine:
             if source.is_dir():
                 try:
                     self._remote.put_output(entry.outputs_hash, source)
-                except BaseException as e:
+                except Exception as e:
                     _warn_once_remote_failed(e)
 

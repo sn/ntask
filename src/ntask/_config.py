@@ -60,3 +60,16 @@ def load_project_config(project_root: Path) -> ProjectConfig:
         remote_cache=remote_cache,
         tui=tool.get("tui"),
     )
+
+
+def resolve_cache_dir(project_root: Path) -> Path:
+    """Return the project's cache directory (``[tool.ntask].cache_dir``).
+
+    Relative values resolve against ``project_root``. An unreadable
+    pyproject falls back to the default ``.ntask``.
+    """
+    try:
+        cfg = load_project_config(project_root)
+    except Exception:
+        return project_root / ".ntask"
+    return project_root / cfg.cache_dir

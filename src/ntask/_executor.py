@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import inspect
 import json
 import shutil
@@ -15,7 +16,7 @@ import anyio
 
 from ._cache import CacheEngine
 from ._cache.diff import MissReport, diff_cache_state
-from ._config import load_project_config
+from ._config import load_project_config, resolve_cache_dir
 from ._coordinator import _ParallelCoordinator
 from ._dag import build_graph, toposort
 from ._logio import _LogTee, hijack_logging_streams, restore_logging_streams
@@ -89,7 +90,7 @@ class Executor:
         self.registry = registry
         self.config = config
         self.cache = CacheEngine(
-            root=config.root / ".ntask",
+            root=resolve_cache_dir(config.root),
             remote=_resolve_remote(config),
         )
 
@@ -106,6 +107,12 @@ class Executor:
         done: dict[str, anyio.Event] = {n: anyio.Event() for n in order}
         resolved_keys: dict[str, str] = {}
         failures: dict[str, BaseException] = {}
+        # Tasks that did not complete successfully for any reason (failed,
+        # skipped because a dependency didn't complete, or cancelled).
+        # Dependents check this, not ``failures``, so a skip propagates down
+        # the whole chain rather than stopping one level below the failure.
+        incomplete: set[str] = set()
+        cancelled_exc = anyio.get_cancelled_exc_class()
 
         limiter = anyio.CapacityLimiter(self.config.concurrency)
         coordinator = _ParallelCoordinator()
@@ -116,7 +123,7 @@ class Executor:
         # record of what each task produced; the TUI and line renderers are
         # both live views on top of it.
         run_id = _utc_run_id()
-        runs_root = self.config.log_dir or (self.config.root / ".ntask" / "runs")
+        runs_root = self.config.log_dir or (self.cache.root / "runs")
         logs_dir = runs_root / run_id
         logs_dir.mkdir(parents=True, exist_ok=True)
         result.run_dir = logs_dir
@@ -141,8 +148,9 @@ class Executor:
         async def run_one(fqn: str) -> None:
             for dep in sub.direct_deps(fqn):
                 await done[dep].wait()
-                if dep in failures:
+                if dep in incomplete:
                     result.skipped.append(fqn)
+                    incomplete.add(fqn)
                     done[fqn].set()
                     return
             t = self.registry.get(fqn)
@@ -150,38 +158,48 @@ class Executor:
                 d: resolved_keys.get(d, "") for d in sub.direct_deps(fqn)
             }
             upstream_tuple = tuple(upstream_by_dep.values())
+            workspace = self.config.root
+            cache = self.cache
 
+            # Cache work (globbing + hashing inputs, restoring outputs, remote
+            # round-trips) is blocking I/O; run it in a worker thread so it
+            # doesn't stall every other task sharing the event loop.
             key: str | None = None
             breakdown = None
             if t.cached_config is not None and not self.config.no_cache:
-                key, breakdown = self.cache.compute_key_and_breakdown(
-                    t, workspace=self.config.root,
-                    upstream_keys_by_dep=upstream_by_dep,
+                task_key, breakdown = await anyio.to_thread.run_sync(
+                    functools.partial(
+                        cache.compute_key_and_breakdown,
+                        t, workspace=workspace, upstream_keys_by_dep=upstream_by_dep,
+                    ),
                 )
-                resolved_keys[fqn] = key
+                key = task_key
+                resolved_keys[fqn] = task_key
                 if fqn not in self.config.force:
-                    entry = self.cache.check(t, key)
-                    if entry is not None:
-                        self.cache.restore_outputs(entry, workspace=self.config.root)
+                    for source in ("local", "remote"):
+                        if source == "remote" and self.config.offline:
+                            break
+                        lookup = cache.check if source == "local" else cache.check_remote
+                        entry = await anyio.to_thread.run_sync(lookup, t, task_key)
+                        if entry is None:
+                            continue
+                        restored = await anyio.to_thread.run_sync(
+                            functools.partial(
+                                cache.restore_outputs, entry, workspace=workspace,
+                            ),
+                        )
+                        if not restored:
+                            continue  # blob missing: treat as a miss
                         result.cached.append(fqn)
                         if self.config.renderer:
-                            self.config.renderer.on_cached(fqn, key=key, source="local")
+                            self.config.renderer.on_cached(
+                                fqn, key=task_key, source=source,
+                            )
                         done[fqn].set()
                         return
 
-                    # Try remote before falling through to execute.
-                    if not self.config.offline:
-                        entry = self.cache.check_remote(t, key)
-                        if entry is not None:
-                            self.cache.restore_outputs(entry, workspace=self.config.root)
-                            result.cached.append(fqn)
-                            if self.config.renderer:
-                                self.config.renderer.on_cached(fqn, key=key, source="remote")
-                            done[fqn].set()
-                            return
-
                 if self.config.renderer:
-                    prior = self.cache.store.latest(fqn)
+                    prior = await anyio.to_thread.run_sync(cache.store.latest, fqn)
                     prior_bd = prior.breakdown if prior is not None else None
                     report: MissReport = diff_cache_state(breakdown, prior_bd)
                     self.config.renderer.on_miss_reason(fqn, report=report)
@@ -226,28 +244,47 @@ class Executor:
                     result.durations[fqn] = elapsed
                     stored_entry = None
                     if key is not None and breakdown is not None:
-                        stored_entry = self.cache.store_entry(
-                            t, key,
-                            workspace=self.config.root,
-                            duration=elapsed,
-                            breakdown=breakdown,
-                            upstream_keys=upstream_tuple,
+                        stored_entry = await anyio.to_thread.run_sync(
+                            functools.partial(
+                                cache.store_entry,
+                                t, key,
+                                workspace=workspace,
+                                duration=elapsed,
+                                breakdown=breakdown,
+                                upstream_keys=upstream_tuple,
+                            ),
                         )
                         if not self.config.offline and stored_entry is not None:
-                            self.cache.push_remote(t, stored_entry)
+                            await anyio.to_thread.run_sync(
+                                cache.push_remote, t, stored_entry,
+                            )
                     if self.config.renderer:
                         self.config.renderer.on_ok(fqn, duration=elapsed)
                     result.ran.append(fqn)
+            except cancelled_exc:
+                # Cancelled because a sibling failed (fail-fast) or the run
+                # was interrupted. This task didn't fail, so don't report it
+                # as failed or print a CancelledError traceback for it.
+                result.skipped.append(fqn)
+                incomplete.add(fqn)
+                done[fqn].set()
+                with anyio.CancelScope(shield=True):
+                    await coordinator.exit(exclusive=exclusive)
+                raise
             except BaseException as e:
                 failures[fqn] = e
+                incomplete.add(fqn)
                 result.failed.append(fqn)
-                _emit_failure_traceback(
-                    fqn=fqn, exc=e, mode=self.config.tb, log_path=log_path,
-                )
-                if self.config.renderer:
-                    self.config.renderer.on_failed(fqn, error=e, tail_lines=[])
-                done[fqn].set()
-                await coordinator.exit(exclusive=exclusive)
+                try:
+                    _emit_failure_traceback(
+                        fqn=fqn, exc=e, mode=self.config.tb, log_path=log_path,
+                    )
+                    if self.config.renderer:
+                        self.config.renderer.on_failed(fqn, error=e, tail_lines=[])
+                finally:
+                    done[fqn].set()
+                    with anyio.CancelScope(shield=True):
+                        await coordinator.exit(exclusive=exclusive)
                 if not self.config.keep_going:
                     raise
                 return
@@ -292,11 +329,18 @@ class Executor:
 
     @staticmethod
     async def _invoke(t: Task, kwargs: dict[str, Any]) -> None:
-        underlying = getattr(t.func, "__wrapped__", t.func)
-        if inspect.iscoroutinefunction(underlying):
-            await underlying(**kwargs)
+        # Always call t.func itself so every decorator layer runs. If the
+        # innermost function is async, call on the event loop (the wrappers
+        # just build a coroutine); otherwise run in a worker thread. Either
+        # way, await whatever comes back if it's awaitable, which covers a
+        # sync decorator wrapped around an async function.
+        func = t.func
+        if inspect.iscoroutinefunction(inspect.unwrap(func)):
+            outcome = func(**kwargs)
         else:
-            await anyio.to_thread.run_sync(lambda: t.func(**kwargs))
+            outcome = await anyio.to_thread.run_sync(lambda: func(**kwargs))
+        if inspect.isawaitable(outcome):
+            await outcome
 
 
 def _format_traceback(exc: BaseException, mode: TbMode) -> str:

@@ -14,6 +14,35 @@ this project uses semantic versioning.
   content so you can still read it. Polls every ~150ms.
 
 ### Fixed
+- `--keep-going`: a skipped task's dependents are now skipped too. Previously
+  only the first level below a failure was skipped and everything further
+  down still ran.
+- Output caching copies files instead of hardlinking them. A tool that rewrote
+  a restored or captured output in place silently changed the cached blob
+  (and anything later pushed to a remote). Captures are staged and renamed
+  into place, so a crash can no longer leave a partial blob behind.
+- `shell()` output under parallel execution now reaches the per-task log file.
+  Previously it only reached the terminal.
+- `shell()` no longer fails a task when a command prints bytes that aren't
+  valid in the locale encoding; they're replaced instead.
+- Fail-fast: tasks cancelled because a sibling failed are recorded as
+  `skipped`, not `failed`, and no longer print a `CancelledError` traceback.
+- A plain `tasks/` folder (no `__init__.py`) next to `tasks.py` no longer
+  fails discovery with `No such file or directory: .../tasks/__init__.py`.
+- Ctrl-C during a remote cache lookup or upload now stops the run. It was
+  swallowed and reported as a "remote cache unreachable" warning.
+- Remote output downloads are staged, so a failed download can't leave an
+  empty blob that later runs treat as a cache hit. A local entry whose output
+  blob has gone missing is now a cache miss instead of crashing the run.
+- `[tool.ntask].cache_dir` is now honoured (it was documented but ignored).
+- Under the TUI, a `--keep-going` run with failures now exits 1, not 0.
+- Async tasks now run every decorator layer, and a sync decorator around an
+  async task gets awaited instead of silently never running.
+- Faster cache checks: input hashing skips `.git/`, gitignored directories
+  and ntask's own cache dir, and a pattern like `src/**/*.py` only walks
+  `src/`. In ntask's own repo, hashing `src/**/*.py` dropped from 1.3s to
+  0.01s. Cache work also runs in a worker thread, so it no longer stalls
+  other parallel tasks.
 - Structured loggers (stdlib `logging` and `structlog` configured with
   the stdlib handler) were writing directly to the original
   `sys.__stderr__` they captured at app-import time, fighting Textual

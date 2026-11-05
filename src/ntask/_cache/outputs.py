@@ -1,46 +1,69 @@
 from __future__ import annotations
 
-import os
 import shutil
+import uuid
+from collections.abc import Collection
 from pathlib import Path
 
-import pathspec
-
 from .hash import hash_many, hash_many_files
+from .manifest import iter_matching_files
 
 
 class OutputStore:
     """Content-addressed output blob store.
 
     Layout: ``<root>/outputs/<outputs-hash>/...``, preserving relative paths.
-    Capture and restore hardlink files where possible and fall back to
-    copying when linking fails (e.g. across filesystems).
+
+    Files are always *copied* in and out, never hardlinked: most tools
+    rewrite their outputs in place, and a shared inode would let that
+    rewrite silently change the stored blob (and anything later pushed to
+    a remote cache) without changing its hash.
     """
 
     def __init__(self, root: Path):
         self.root = root
         self._outputs_dir = root / "outputs"
 
+    @property
+    def outputs_dir(self) -> Path:
+        return self._outputs_dir
+
     def _hash_dir(self, digest: str) -> Path:
         return self._outputs_dir / digest
+
+    def staging_dir(self, digest: str) -> Path:
+        """A unique sibling of the blob dir to fill before renaming it into place."""
+        return self._outputs_dir / f".{digest}.staging.{uuid.uuid4().hex[:8]}"
+
+    def commit_staged(self, staging: Path, digest: str) -> None:
+        """Atomically move a fully-written ``staging`` dir to the blob path.
+
+        If another writer got there first, its (identical) blob wins and
+        ``staging`` is discarded.
+        """
+        target = self._hash_dir(digest)
+        try:
+            staging.rename(target)
+        except OSError:
+            if not target.is_dir():
+                raise
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
 
     def capture(
         self,
         patterns: list[str] | tuple[str, ...],
         *,
         root: Path,
+        exclude: Collection[Path] = (),
     ) -> str | None:
         """Capture matching files into the content-addressed store, return the hash."""
         if not patterns:
             return None
-        spec = pathspec.PathSpec.from_lines("gitwildmatch", patterns)
-        matches: list[Path] = []
-        for p in root.rglob("*"):
-            if not p.is_file():
-                continue
-            rel = p.relative_to(root).as_posix()
-            if spec.match_file(rel):
-                matches.append(p)
+        matches = list(iter_matching_files(
+            patterns, root=root, exclude=(self.root, *exclude),
+        ))
         if not matches:
             return None
 
@@ -52,16 +75,20 @@ class OutputStore:
             parts.append(fh.digest.encode())
         digest = hash_many(parts)
 
-        target = self._hash_dir(digest)
-        if target.exists():
+        if self._hash_dir(digest).is_dir():
             return digest
 
-        target.mkdir(parents=True, exist_ok=True)
-        for fh in file_hashes:
-            rel_path = fh.path.relative_to(root)
-            dest = target / rel_path
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            self._link_or_copy(fh.path, dest)
+        self._outputs_dir.mkdir(parents=True, exist_ok=True)
+        staging = self.staging_dir(digest)
+        try:
+            for fh in file_hashes:
+                dest = staging / fh.path.relative_to(root)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(fh.path, dest)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        self.commit_staged(staging, digest)
         return digest
 
     def restore(self, digest: str, *, root: Path) -> None:
@@ -75,13 +102,13 @@ class OutputStore:
             rel = p.relative_to(src)
             dest = root / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
+            # Unlink first: the workspace file may still be a hardlink into
+            # the store from an older ntask, and copying over it in place
+            # would write straight through into the blob.
+            if dest.is_file() or dest.is_symlink():
                 dest.unlink()
-            self._link_or_copy(p, dest)
+            shutil.copy2(p, dest)
 
-    @staticmethod
-    def _link_or_copy(src: Path, dest: Path) -> None:
-        try:
-            os.link(src, dest)
-        except (OSError, NotImplementedError):
-            shutil.copy2(src, dest)
+    def clear(self) -> None:
+        if self._outputs_dir.exists():
+            shutil.rmtree(self._outputs_dir)

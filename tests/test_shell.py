@@ -203,3 +203,38 @@ def test_shell_capture_true_takes_precedence_over_log_file(tmp_path: Path):
     assert "captured" in result.stdout
     # Log file should NOT have been touched.
     assert not log.exists()
+
+
+def test_shell_prefix_mode_tees_to_per_task_log(tmp_path: Path, monkeypatch):
+    # The pump threads must see the caller's _current_log_file context var.
+    from ntask._logio import _LogTee
+
+    log = tmp_path / "build.log"
+    monkeypatch.setattr(sys, "stdout", _LogTee(sys.stdout))
+    p_token = _current_line_prefix.set("build")
+    l_token = _current_log_file.set(log)
+    try:
+        shell([sys.executable, "-c", "print('hi')"])
+    finally:
+        _current_log_file.reset(l_token)
+        _current_line_prefix.reset(p_token)
+    assert log.read_text() == "[build] hi\n"
+
+
+def test_shell_prefix_mode_tolerates_undecodable_output(capfd):
+    # More than a pipe buffer of invalid UTF-8 must not kill the pump thread.
+    token = _current_line_prefix.set("build")
+    try:
+        shell([sys.executable, "-c",
+               "import sys; sys.stdout.buffer.write(b'\\xff' * 200000 + b'\\nend\\n')"])
+    finally:
+        _current_line_prefix.reset(token)
+    out, _ = capfd.readouterr()
+    assert "[build] end" in out
+
+
+def test_shell_capture_tolerates_undecodable_output():
+    result = shell([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xffok')"],
+                   capture=True)
+    assert result is not None
+    assert result.stdout.endswith("ok")

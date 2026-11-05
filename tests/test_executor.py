@@ -534,3 +534,117 @@ async def test_executor_per_task_log_file_captures_shell_output(tmp_path: Path):
     log_file = run_dir / "build.log"
     assert log_file.is_file()
     assert b"task-output-marker" in log_file.read_bytes()
+
+
+async def test_keep_going_skip_propagates_transitively(tmp_path: Path):
+    ran: list[str] = []
+
+    @task
+    def a():
+        raise RuntimeError("boom")
+
+    @task(deps=[a])
+    def b():
+        ran.append("b")
+
+    @task(deps=[b])
+    def c():
+        ran.append("c")
+
+    cfg = ExecutionConfig(root=tmp_path, keep_going=True, tb="none")
+    result = await Executor(default_registry(), cfg).run(["c"])
+    assert ran == []
+    assert result.failed == ["a"]
+    assert sorted(result.skipped) == ["b", "c"]
+
+
+async def test_fail_fast_cancelled_sibling_is_skipped_not_failed(tmp_path: Path):
+    @task
+    def fails():
+        raise RuntimeError("boom")
+
+    @task
+    async def slow():
+        await anyio.sleep(10)
+
+    cfg = ExecutionConfig(root=tmp_path, concurrency=2, tb="none")
+    ex = Executor(default_registry(), cfg)
+    with pytest.raises(BaseExceptionGroup):
+        await ex.run(["fails", "slow"])
+    import json
+    run_dir = sorted((tmp_path / ".ntask" / "runs").iterdir())[-1]
+    states = {t["fqn"]: t["state"] for t in json.loads((run_dir / "run.json").read_text())["tasks"]}
+    assert states == {"fails": "failed", "slow": "skipped"}
+
+
+async def test_async_task_runs_user_decorator(tmp_path: Path):
+    import functools
+
+    calls: list[str] = []
+
+    def traced(fn):
+        @functools.wraps(fn)
+        async def wrapper(*a, **kw):
+            calls.append("wrapper")
+            await fn(*a, **kw)
+        return wrapper
+
+    @task
+    @traced
+    async def work():
+        calls.append("body")
+
+    await Executor(default_registry(), ExecutionConfig(root=tmp_path)).run(["work"])
+    assert calls == ["wrapper", "body"]
+
+
+async def test_sync_decorator_around_async_task_is_awaited(tmp_path: Path):
+    calls: list[str] = []
+
+    def plain(fn):
+        def wrapper(*a, **kw):  # no functools.wraps, returns a coroutine
+            return fn(*a, **kw)
+        wrapper.__name__ = fn.__name__
+        return wrapper
+
+    @task
+    @plain
+    async def work():
+        calls.append("body")
+
+    await Executor(default_registry(), ExecutionConfig(root=tmp_path)).run(["work"])
+    assert calls == ["body"]
+
+
+async def test_missing_output_blob_is_treated_as_miss(tmp_path: Path):
+    import shutil
+
+    runs = {"n": 0}
+
+    @task
+    @cached(outputs=["out.txt"])
+    def build():
+        runs["n"] += 1
+        (tmp_path / "out.txt").write_text("x")
+
+    cfg = ExecutionConfig(root=tmp_path)
+    await Executor(default_registry(), cfg).run(["build"])
+    shutil.rmtree(tmp_path / ".ntask" / "outputs")
+    (tmp_path / "out.txt").unlink()
+    result = await Executor(default_registry(), cfg).run(["build"])
+    assert runs["n"] == 2
+    assert result.ran == ["build"]
+    assert (tmp_path / "out.txt").read_text() == "x"
+
+
+async def test_executor_honours_cache_dir_setting(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text('[tool.ntask]\ncache_dir = "build/cache"\n')
+
+    @task
+    @cached()
+    def build(): pass
+
+    await Executor(default_registry(), ExecutionConfig(root=tmp_path)).run(["build"])
+    assert (tmp_path / "build" / "cache" / "cache" / "build").is_dir()
+    assert (tmp_path / "build" / "cache" / "runs").is_dir()
+    assert not (tmp_path / ".ntask").exists()

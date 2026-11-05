@@ -106,3 +106,41 @@ def test_remote_error_warns_once_and_falls_back(tmp_path: Path, capsys):
     assert engine.check_remote(_sample_task(), "k2") is None
     out2 = capsys.readouterr()
     assert out2.err == ""
+
+
+def test_check_remote_failed_download_leaves_no_blob_dir(tmp_path: Path):
+    # A partial/empty blob dir would be trusted as complete by later runs.
+    from dataclasses import replace
+
+    entry = replace(_sample_entry(), outputs_hash="deadbeef")
+    remote = MagicMock()
+    remote.get_entry.return_value = entry.to_dict()
+
+    def _fail(outputs_hash, dest_dir):
+        dest_dir.mkdir(parents=True)
+        (dest_dir / "half.txt").write_text("partial")
+        raise ConnectionError("dropped")
+
+    remote.get_output.side_effect = _fail
+    engine = CacheEngine(root=tmp_path / ".ntask", remote=remote)
+    assert engine.check_remote(_sample_task(), "k1") is None
+    outputs = tmp_path / ".ntask" / "outputs"
+    assert not outputs.exists() or list(outputs.iterdir()) == []
+
+
+def test_check_remote_does_not_swallow_keyboard_interrupt(tmp_path: Path):
+    import pytest
+
+    remote = MagicMock()
+    remote.get_entry.side_effect = KeyboardInterrupt
+    engine = CacheEngine(root=tmp_path / ".ntask", remote=remote)
+    with pytest.raises(KeyboardInterrupt):
+        engine.check_remote(_sample_task(), "k1")
+
+
+def test_restore_outputs_reports_missing_blob(tmp_path: Path):
+    from dataclasses import replace
+
+    engine = CacheEngine(root=tmp_path / ".ntask")
+    entry = replace(_sample_entry(), outputs_hash="gone")
+    assert engine.restore_outputs(entry, workspace=tmp_path) is False
